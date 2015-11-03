@@ -1,0 +1,3 @@
+[submodule "src/main/scala/fpga-tidbits"]
+	path = src/main/scala/fpga-tidbits
+	url = https://github.com/maltanar/fpga-tidbits.git
