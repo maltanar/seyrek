@@ -19,8 +19,8 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
 
   val add = Module(p.makeSemiringAdd())
   val mul = Module(p.makeSemiringMul())
+  val sched = Module(p.makeScheduler())
 
-  // TODO add schedular
   // TODO add queues and connect to context load/save ports
   // TODO wire up start/finished logic
 }

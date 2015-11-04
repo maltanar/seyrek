@@ -8,15 +8,19 @@ trait SeyrekParams {
   def indWidth: Int
   def valWidth: Int
   def mrp: MemReqParams
+  // context memory creation
   def makeContextMemory: () => ContextMem
+  // semiring operations
   def makeSemiringAdd: () => SemiringOp
   def makeSemiringMul: () => SemiringOp
+  // scheduler-related
+  def issueWindow: Int
+  def makeScheduler: () => Scheduler
   // type definitions for convenience, useful as clone types
   val v = UInt(width = valWidth)
   val i = UInt(width = indWidth)
   val wu = new WorkUnit(valWidth, indWidth)
   val vi = new ValIndPair(valWidth, indWidth)
-  // TODO add fabricator fxns for semiring add-mul
 }
 
 class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
