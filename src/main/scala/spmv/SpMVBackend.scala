@@ -12,12 +12,7 @@ import TidbitsStreams._
 class SpMVIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csc = new CSCSpMV(p).asInput
   // output to frontend
-  val workUnits = Decoupled(new WorkUnit(p))
-  // ports for context loads-stores from frontend
-  val contextLoadReq = Decoupled(UInt(width = p.indWidth)).flip
-  val contextLoadRsp = Decoupled(new ValIndPair(p))
-  val contextSaveReq = Decoupled(new ValIndPair(p)).flip
-  val contextSaveRsp = Decoupled(UInt(width = p.indWidth))
+  val workUnits = Decoupled(p.wu)
   // memory ports
   // TODO parametrize SpMV backend port count and mapping
   val reqSeq = new GenericMemoryMasterPort(p.mrp)
@@ -25,10 +20,6 @@ class SpMVIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
 
 class SpMVBackend(p: SeyrekParams) extends Module {
   val io = new SpMVIO(p)
-
-  // instantiate useful types, mostly used as clone types
-  val wu = new WorkUnit(p)
-  val vi = new ValIndPair(p)
 
   // instantiate StreamReaders for fetching the sequential SpMV streams
   // these will be feeding the frontend with data
@@ -57,11 +48,11 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   // repeat each input vector element <colLen> times
   val repeatedVec = StreamRepeatElem(readInpVec.io.out, colLens)
   // join up to create the outputs that the frontend expects
-  val nzAndInd = StreamJoin(readNZData.io.out, readRowInd.io.out, vi,
-    {(a: UInt, b: UInt) => ValIndPair(a, b, p)})
+  val nzAndInd = StreamJoin(readNZData.io.out, readRowInd.io.out, p.vi,
+    {(a: UInt, b: UInt) => ValIndPair(a, b)})
   def makeWorkUnit(vi: ValIndPair, v: UInt): WorkUnit = {
-    WorkUnit(vi.value, v, vi.ind, p) }
-  StreamJoin(nzAndInd, repeatedVec, wu, makeWorkUnit) <> io.workUnits
+    WorkUnit(vi.value, v, vi.ind) }
+  StreamJoin(nzAndInd, repeatedVec, p.wu, makeWorkUnit) <> io.workUnits
 
 
   // interleave all sequential streams onto a single memory port

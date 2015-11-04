@@ -8,17 +8,24 @@ trait SeyrekParams {
   def indWidth: Int
   def valWidth: Int
   def mrp: MemReqParams
+  def makeContextMemory: () => ContextMem
+  // type definitions for convenience, useful as clone types
+  val v = UInt(width = valWidth)
+  val i = UInt(width = indWidth)
+  val wu = new WorkUnit(valWidth, indWidth)
+  val vi = new ValIndPair(valWidth, indWidth)
+  // TODO add fabricator fxns for semiring add-mul
 }
 
-class WorkUnit(p: SeyrekParams) extends Bundle {
-  val matrixVal = UInt(width = p.valWidth)
-  val vectorVal = UInt(width = p.valWidth)
-  val rowInd = UInt(width = p.indWidth)
+class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
+  val matrixVal = UInt(width = valWidth)
+  val vectorVal = UInt(width = valWidth)
+  val rowInd = UInt(width = indWidth)
 }
 
 object WorkUnit {
-  def apply(m: UInt, v: UInt, i: UInt, p: SeyrekParams): WorkUnit = {
-    val workUnit = new WorkUnit(p)
+  def apply(m: UInt, v: UInt, i: UInt): WorkUnit = {
+    val workUnit = new WorkUnit(v.getWidth(), i.getWidth())
     workUnit.matrixVal := m
     workUnit.vectorVal := v
     workUnit.rowInd := i
@@ -26,14 +33,14 @@ object WorkUnit {
   }
 }
 
-class ValIndPair(p: SeyrekParams) extends Bundle {
-  val value = UInt(width = p.valWidth)
-  val ind = UInt(width = p.indWidth)
+class ValIndPair(valWidth: Int, indWidth: Int) extends Bundle {
+  val value = UInt(width = valWidth)
+  val ind = UInt(width = indWidth)
 }
 
 object ValIndPair {
-  def apply(v: UInt, i: UInt, p: SeyrekParams): ValIndPair = {
-    val vip = new ValIndPair(p)
+  def apply(v: UInt, i: UInt): ValIndPair = {
+    val vip = new ValIndPair(v.getWidth(), i.getWidth())
     vip.value := v
     vip.ind := i
     vip
@@ -55,7 +62,7 @@ class CSCSpMV(p: SeyrekParams) extends Bundle {
 trait SeyrekCtrlStat {
   val start = Bool(INPUT)
   val finished = Bool(OUTPUT)
-  val mode = UInt(width = 10)
+  val mode = UInt(INPUT, width = 10)
 }
 
 object SeyrekModes {
