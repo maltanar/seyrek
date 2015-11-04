@@ -9,6 +9,8 @@ trait SeyrekParams {
   def valWidth: Int
   def mrp: MemReqParams
   def makeContextMemory: () => ContextMem
+  def makeSemiringAdd: () => SemiringOp
+  def makeSemiringMul: () => SemiringOp
   // type definitions for convenience, useful as clone types
   val v = UInt(width = valWidth)
   val i = UInt(width = indWidth)
