@@ -8,8 +8,8 @@ class SpMVFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   // input from backend
   val workUnits = Decoupled(p.wu).flip
   // context access ports
-  val contextLoadReq = Decoupled(p.i)
-  val contextLoadRsp = Decoupled(p.vi).flip
+  val contextLoadReq = Decoupled(p.vi)
+  val contextLoadRsp = Decoupled(p.wu).flip
   val contextSaveReq = Decoupled(p.vi)
   val contextSaveRsp = Decoupled(p.i).flip
 }
@@ -17,10 +17,29 @@ class SpMVFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
 class SpMVFrontend(p: SeyrekParams) extends Module {
   val io = new SpMVFrontendIO(p)
 
-  val add = Module(p.makeSemiringAdd())
-  val mul = Module(p.makeSemiringMul())
+  val mul = Module(new ContextfulSemiringOp(p, p.makeSemiringMul)).io
+  val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
   val sched = Module(p.makeScheduler())
 
-  // TODO add queues and connect to context load/save ports
+  // (v, v, i) -> [mul] -> (n = v*v, i)
+  io.workUnits <> mul.in
+
+  // (n, i) -> [queue] -> [scheduler]
+  Queue(mul.out, 2) <> sched.io.instr
+
+  // [scheduler] -> (n, i) -> [load context]
+  sched.io.issue <> io.contextLoadReq
+
+  // [load context] -> (o, n, i) -> [add]
+  io.contextLoadRsp <> add.in
+
+  // [add] -> (s = o+n, i) -> [queue] -> [save context]
+  Queue(add.out, 2) <> io.contextSaveReq
+
+  // signal completion to remove from scheduler
+  // [save context] -> i -> [scheduler]
+  io.contextSaveRsp <> sched.io.compl
+
   // TODO wire up start/finished logic
+  // TODO add statistics
 }
