@@ -47,7 +47,7 @@ class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
   flush.baseAddr := io.contextBase
   flush.byteCount := UInt(p.depth * p.dataBits/8)
   flush.in.valid := bramw.contextLoadRsp.valid
-  flush.in.bits := bramw.contextLoadRsp.bits.value
+  flush.in.bits := bramw.contextLoadRsp.bits.vectorVal
   // give the main mem write channel to the StreamWriter
   flush.req <> io.mainMem.memWrReq
   flush.wdat <> io.mainMem.memWrDat
@@ -91,7 +91,8 @@ class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
       // connect addrgen to contextLoad requests
       addrgen.start := Bool(true)
       addrgen.seq.ready := bramw.contextLoadReq.ready
-      bramw.contextLoadReq.bits := addrgen.seq.bits
+      bramw.contextLoadReq.bits.ind := addrgen.seq.bits
+      bramw.contextLoadReq.bits.value := UInt(0) // old context unused
       bramw.contextLoadReq.valid := addrgen.seq.valid
       // StreamWriter generate main mem write requests from load responses
       flush.start := Bool(true)
@@ -110,8 +111,8 @@ class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
 class BRAMWrapper(p: BRAMContextMemParams) extends Module {
   val io = new Bundle {
     // context load port
-    val contextLoadReq = Decoupled(UInt(width = p.idBits)).flip
-    val contextLoadRsp = Decoupled(new ValIndPair(p.dataBits, p.idBits))
+    val contextLoadReq = Decoupled(new ValIndPair(p.dataBits, p.idBits)).flip
+    val contextLoadRsp = Decoupled(new WorkUnit(p.dataBits, p.idBits))
     // context save port
     val contextSaveReq = Decoupled(new ValIndPair(p.dataBits, p.idBits)).flip
     val contextSaveRsp = Decoupled(UInt(width = p.idBits))
@@ -127,16 +128,18 @@ class BRAMWrapper(p: BRAMContextMemParams) extends Module {
   val doRead = canDoRead & io.contextLoadReq.valid
 
   io.contextLoadReq.ready := canDoRead
-  readPort.req.addr := io.contextLoadReq.bits
+  readPort.req.addr := io.contextLoadReq.bits.ind
   readPort.req.writeEn := Bool(false)
   readPort.req.writeData := UInt(0)
 
   val readOK = ShiftRegister(doRead, p.readLatency)
-  val readInd = ShiftRegister(io.contextLoadReq.bits, p.readLatency)
+  val readContext = ShiftRegister(io.contextLoadReq.bits, p.readLatency)
 
   readRspQ.enq.valid := readOK
-  readRspQ.enq.bits.value := readPort.rsp.readData
-  readRspQ.enq.bits.ind := readInd
+  // these aren't really matrixVal and vectorVal, but old value and new contr.
+  readRspQ.enq.bits.matrixVal := readPort.rsp.readData  // old value (O)
+  readRspQ.enq.bits.vectorVal := readContext.value // new contribution (N)
+  readRspQ.enq.bits.rowInd := readContext.ind
   readRspQ.deq <> io.contextLoadRsp
 
   // connect the write port to save request-response queues
