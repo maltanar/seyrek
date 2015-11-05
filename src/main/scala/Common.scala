@@ -2,6 +2,7 @@ package Seyrek
 
 import Chisel._
 import TidbitsDMA._
+import TidbitsStreams._
 
 trait SeyrekParams {
   val memPtrWidth: Int = 64 // TODO take from mrp
@@ -17,10 +18,11 @@ trait SeyrekParams {
   def issueWindow: Int
   def makeScheduler: () => Scheduler
   // type definitions for convenience, useful as clone types
-  val v = UInt(width = valWidth)
-  val i = UInt(width = indWidth)
-  val wu = new WorkUnit(valWidth, indWidth)
-  val vi = new ValIndPair(valWidth, indWidth)
+  val v = UInt(width = valWidth)  // values
+  val i = UInt(width = indWidth)  // index (context identifier / row index)
+  val wu = new WorkUnit(valWidth, indWidth) // (value, value, index)
+  val vi = new ValIndPair(valWidth, indWidth) // (value, index)
+  val vv = new SemiringOperands(valWidth) // (value, value)
 }
 
 class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
@@ -52,6 +54,43 @@ object ValIndPair {
     vip
   }
 }
+
+// "contextful" version of semiring op (also carries the index through the
+// pipeline through a FIFO queue of equal latency)
+
+class ContextfulSemiringOpIO(p: SeyrekParams) extends Bundle {
+  val in = Decoupled(p.wu).flip
+  val out = Decoupled(p.vi)
+}
+
+class ContextfulSemiringOp(p: SeyrekParams, instFxn: () => SemiringOp)
+extends Module {
+  val io = new ContextfulSemiringOpIO(p)
+  val opInst = Module(instFxn())
+  val forker = Module(new StreamFork(genIn = p.wu, genA = p.vv, genB = p.i,
+    forkA = {wu: WorkUnit => SemiringOperands(wu.matrixVal, wu.vectorVal)},
+    forkB = {wu: WorkUnit => wu.rowInd}
+  )).io
+  val joiner = Module(new StreamJoin(genA = p.v, genB = p.i, genOut = p.vi,
+    join = {(v: UInt, i: UInt) => ValIndPair(v, i)}
+  )).io
+
+  io.in <> forker.in
+  forker.outA <> opInst.io.in
+  opInst.io.out <> joiner.inA
+  joiner.out <> io.out
+
+
+  if(opInst.latency == 0) {
+    forker.outB <> joiner.inB
+  } else {
+    val indQ = Module(new Queue(p.i, opInst.latency, pipe=true)).io
+    forker.outB <> indQ.enq
+    indQ.deq <> joiner.inB
+  }
+}
+
+// bundles and types used for interfaces and control/status
 
 class CSCSpMV(p: SeyrekParams) extends Bundle {
   val colPtr = UInt(width = p.memPtrWidth)

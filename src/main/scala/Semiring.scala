@@ -34,7 +34,7 @@ class SemiringOpIO(w: Int) extends Bundle {
 // exposes a Valid-wrapped (UInt, UInt) => UInt interface, and the op latency
 abstract class SemiringOp(val w: Int) extends Module {
   val io = new SemiringOpIO(w)
-  lazy val latency: Int = 0
+  def latency: Int
 }
 
 // combinatorial variants of UInt add and multiply
@@ -42,12 +42,14 @@ class OpAddCombinatorial(w: Int) extends SemiringOp(w) {
   io.out.bits := io.in.bits.first + io.in.bits.second
   io.out.valid := io.in.valid
   io.in.ready := io.out.ready
+  val latency = 0
 }
 
 class OpMulCombinatorial(w: Int) extends SemiringOp(w) {
   io.out.bits := io.in.bits.first * io.in.bits.second
   io.out.valid := io.in.valid
   io.in.ready := io.out.ready
+  val latency = 0
 }
 
 // systolic reg to parametrize op stages flexibly
@@ -80,7 +82,7 @@ class SystolicReg(w: Int) extends Module {
 // the delay pipe anyway
 class StagedUIntOp(w: Int, n: Int, fxn: (UInt, UInt) => UInt)
 extends SemiringOp(w) {
-  override lazy val latency: Int = n
+  val latency = n
   if(latency == 0) {
     println("StagedUIntOp needs at least 1 stage")
     System.exit(-1)
@@ -109,7 +111,7 @@ object isVerilog {
 }
 
 class DPAdder(stages: Int) extends SemiringOp(64) {
-  override lazy val latency: Int = stages
+  val latency: Int = stages
   val enableBlackBox = isVerilog()
 
   if(enableBlackBox) {
@@ -136,7 +138,7 @@ class DPAdder(stages: Int) extends SemiringOp(64) {
 
 
 class DPMultiplier(stages: Int) extends SemiringOp(64) {
-  override lazy val latency: Int = stages
+  val latency: Int = stages
   val enableBlackBox = isVerilog()
 
   if(enableBlackBox) {
