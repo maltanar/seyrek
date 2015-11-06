@@ -4,6 +4,9 @@ import Chisel._
 import TidbitsDMA._
 import TidbitsStreams._
 
+// TODO sanity-check whether scheduler and contextmem orderings match
+// TODO add ordering params to semirings as well?
+
 trait SeyrekParams {
   val memPtrWidth: Int = 64 // TODO take from mrp
   def indWidth: Int

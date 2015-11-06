@@ -26,4 +26,7 @@ class ContextMemIO(p: ContextMemParams) extends Bundle with SeyrekCtrlStat {
 
 abstract class ContextMem(p: ContextMemParams) extends Module {
   val io = new ContextMemIO(p)
+
+  // whether the ContextMem responds to load/save commands in-order
+  def inOrder: Boolean
 }

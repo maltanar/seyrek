@@ -18,6 +18,7 @@ class BRAMContextMemParams(
 ) extends ContextMemParams(idBits, dataBits, mrp)
 
 class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
+  val inOrder = true
   val addrBits = log2Up(p.depth)
 
   io.finished := Bool(false)
