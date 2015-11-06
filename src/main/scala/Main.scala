@@ -9,6 +9,28 @@ import TidbitsAXI._
 import TidbitsDMA._
 import TidbitsPlatformWrapper._
 
+class SampleSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val indWidth = 32
+  val valWidth = 32
+  val mrp = p.toMemReqParams()
+  val makeContextMemory = { () =>
+    new BRAMContextMem(new BRAMContextMemParams(
+      depth = 1024, readLatency = 1, writeLatency = 1,
+      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
+    ))
+  }
+
+  val makeSemiringAdd = { () =>
+    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
+  }
+
+  val makeSemiringMul = { () =>
+    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a*b})
+  }
+  val issueWindow = 4
+  val makeScheduler = { () => new InOrderScheduler(this) }
+}
+
 object SeyrekMainObj {
   type AccelInstFxn = PlatformWrapperParams => GenericAccelerator
   type AccelMap = Map[String, AccelInstFxn]
@@ -16,7 +38,8 @@ object SeyrekMainObj {
   type PlatformMap = Map[String, PlatformInstFxn]
 
   val accelMap: AccelMap  = Map(
-    "TestBRAMContextMem" -> {p => new TestBRAMContextMem(p)}
+    "TestBRAMContextMem" -> {p => new TestBRAMContextMem(p)},
+    "SampleSpMV" -> {p => new SpMVAccel(p, new SampleSpMVParams(p))}
   )
 
   val platformMap: PlatformMap = Map(

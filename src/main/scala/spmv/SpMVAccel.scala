@@ -3,21 +3,31 @@ package Seyrek
 import Chisel._
 import TidbitsPlatformWrapper._
 
-trait SpMVAccelParams extends PlatformWrapperParams with SeyrekParams
-
-class SpMVAccel(p: PlatformWrapperParams) extends GenericAccelerator(p) {
+class SpMVAccel(p: PlatformWrapperParams, pSeyrek: SeyrekParams)
+extends GenericAccelerator(p) {
   val numMemPorts = 1 // TODO should be made configurable
   val io = new GenericAcceleratorIF(numMemPorts, p) {
     val start = Bool(INPUT)
     val mode = UInt(INPUT, width = 10)
     val finished = Bool(OUTPUT)
-    val csc = new CSCSpMV(p).asInput
+    val csc = new CSCSpMV(pSeyrek).asInput
   }
   io.signature := makeDefaultSignature()
 
-  val backend = Module(new SpMVBackend(p))
-  val frontend = Module(new SpMVFrontend(p))
-  val contextmem = Module(p.makeContextMemory())
+  val backend = Module(new SpMVBackend(pSeyrek))
+  val frontend = Module(new SpMVFrontend(pSeyrek))
+  val contextmem = Module(pSeyrek.makeContextMemory())
+
+  backend.io.start := io.start
+  frontend.io.start := io.start
+  contextmem.io.start := io.start
+
+  backend.io.mode := io.mode
+  frontend.io.mode := io.mode
+  contextmem.io.mode := io.mode
+
+  io.finished := Mux(io.mode === SeyrekModes.START_REGULAR,
+                    frontend.io.finished, contextmem.io.finished)
 
   // TODO expose more detailed status and statistics
 
