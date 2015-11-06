@@ -8,7 +8,6 @@ import TidbitsStreams._
 // TODO add ordering params to semirings as well?
 
 trait SeyrekParams {
-  val memPtrWidth: Int = 64 // TODO take from mrp
   def indWidth: Int
   def valWidth: Int
   def mrp: MemReqParams
@@ -21,11 +20,11 @@ trait SeyrekParams {
   def issueWindow: Int
   def makeScheduler: () => Scheduler
   // type definitions for convenience, useful as clone types
-  val v = UInt(width = valWidth)  // values
-  val i = UInt(width = indWidth)  // index (context identifier / row index)
-  val wu = new WorkUnit(valWidth, indWidth) // (value, value, index)
-  val vi = new ValIndPair(valWidth, indWidth) // (value, index)
-  val vv = new SemiringOperands(valWidth) // (value, value)
+  def v = UInt(width = valWidth)  // values
+  def i = UInt(width = indWidth)  // index (context identifier / row index)
+  def wu = new WorkUnit(valWidth, indWidth) // (value, value, index)
+  def vi = new ValIndPair(valWidth, indWidth) // (value, index)
+  def vv = new SemiringOperands(valWidth) // (value, value)
 }
 
 class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
@@ -100,11 +99,11 @@ extends Module {
 // bundles and types used for interfaces and control/status
 
 class CSCSpMV(p: SeyrekParams) extends Bundle {
-  val colPtr = UInt(width = p.memPtrWidth)
-  val rowInd = UInt(width = p.memPtrWidth)
-  val nzData = UInt(width = p.memPtrWidth)
-  val inpVec = UInt(width = p.memPtrWidth)
-  val outVec = UInt(width = p.memPtrWidth)
+  val colPtr = UInt(width = p.mrp.addrWidth)
+  val rowInd = UInt(width = p.mrp.addrWidth)
+  val nzData = UInt(width = p.mrp.addrWidth)
+  val inpVec = UInt(width = p.mrp.addrWidth)
+  val outVec = UInt(width = p.mrp.addrWidth)
 
   val rows = UInt(width = p.indWidth)
   val cols = UInt(width = p.indWidth)
