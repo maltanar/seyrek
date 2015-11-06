@@ -29,6 +29,8 @@ class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
   val matrixVal = UInt(width = valWidth)
   val vectorVal = UInt(width = valWidth)
   val rowInd = UInt(width = indWidth)
+
+  override def cloneType: this.type = new WorkUnit(valWidth, indWidth).asInstanceOf[this.type]
 }
 
 object WorkUnit {
@@ -44,6 +46,8 @@ object WorkUnit {
 class ValIndPair(valWidth: Int, indWidth: Int) extends Bundle {
   val value = UInt(width = valWidth)
   val ind = UInt(width = indWidth)
+
+  override def cloneType: this.type = new ValIndPair(valWidth, indWidth).asInstanceOf[this.type]
 }
 
 object ValIndPair {
