@@ -111,6 +111,7 @@ class CSCSpMV(p: SeyrekParams) extends Bundle {
   val nz = UInt(width = p.indWidth)
 }
 
+// TODO add error signaling here and throughout the framework
 trait SeyrekCtrlStat {
   val start = Bool(INPUT)
   val finished = Bool(OUTPUT)

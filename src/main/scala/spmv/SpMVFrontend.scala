@@ -40,6 +40,27 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   // [save context] -> i -> [scheduler]
   io.contextSaveRsp <> sched.io.compl
 
-  // TODO wire up start/finished logic
+  // completion logic
+  io.finished := Bool(false)
+  val regCompletedOps = Reg(init = UInt(0, 32))
+
+  val sIdle :: sRunning :: sFinished :: Nil = Enum(UInt(), 3)
+  val regState = Reg(init = UInt(sIdle))
+
+  switch(regState) {
+      is(sIdle) {
+        when((io.mode === SeyrekModes.START_REGULAR) & io.start) {
+          regState := sRunning
+          regCompletedOps := UInt(0)
+        }
+      }
+
+      is(sRunning) {
+        when (regCompletedOps === io.csc.nz) { regState := sFinished }
+      }
+
+      is(sFinished) { when (!io.start) {regState := sIdle} }
+  }
+
   // TODO add statistics
 }
