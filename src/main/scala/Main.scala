@@ -15,15 +15,8 @@ object SeyrekMainObj {
   type PlatformInstFxn = AccelInstFxn => PlatformWrapper
   type PlatformMap = Map[String, PlatformInstFxn]
 
-
   val accelMap: AccelMap  = Map(
-    "TestRegOps" -> {p => new TestRegOps(p)},
-    "TestSum" -> {p => new TestSum(p)},
-    "TestMultiChanSum" -> {p => new TestMultiChanSum(p)},
-    "TestSeqWrite" -> {p => new TestSeqWrite(p)},
-    "TestCopy" -> {p => new TestCopy(p)},
-    "TestRandomRead" -> {p => new TestRandomRead(p)},
-    "TestBRAM" -> {p => new TestBRAM(p)}
+    "TestBRAMContextMem" -> {p => new TestBRAMContextMem(p)}
   )
 
   val platformMap: PlatformMap = Map(

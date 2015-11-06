@@ -5,6 +5,9 @@ import TidbitsDMA._
 import TidbitsOCM._
 import TidbitsStreams._
 
+// TODO make init range and value customizable
+// TODO make flush range customizable
+
 class BRAMContextMemParams(
   val depth: Int,
   val readLatency: Int,
@@ -16,29 +19,58 @@ class BRAMContextMemParams(
 
 class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
   val addrBits = log2Up(p.depth)
+
+  io.finished := Bool(false)
+
   // instantiate BRAM wrapper
   val bramw = Module(new BRAMWrapper(p)).io
-  // connect load-save streams directly to BRAM wrapper ports by default
-  io.contextLoadReq <> bramw.contextLoadReq
-  bramw.contextLoadRsp <> io.contextLoadRsp
-  io.contextSaveReq <> bramw.contextSaveReq
-  bramw.contextSaveRsp <> io.contextSaveRsp
 
-  // set up a sequence generator for use in init/flush
-  val addrgen = Module(new SequenceGenerator(addrBits)).io
-  addrgen.start := Bool(false)
-  addrgen.init := UInt(0)
-  addrgen.count := UInt(p.depth)
-  addrgen.step := UInt(1)
-  addrgen.seq.ready := Bool(false)
+  // components for init and the save port
+  val initReqQ = Module(new Queue(io.contextSaveReq.bits, 2)).io
+  val initRspQ = Module(new Queue(io.contextSaveRsp.bits, 2)).io
+  val saveSel = UInt(width = 1)
+  saveSel := UInt(0)
+  val saveReqs = Seq(io.contextSaveReq, initReqQ.deq)
+  val saveRsps = Seq(io.contextSaveRsp, initRspQ.enq)
+  DecoupledInputMux(saveSel, saveReqs) <> bramw.contextSaveReq
+  bramw.contextSaveRsp <> DecoupledOutputDemux(saveSel, saveRsps)
+  // sequence generator for init addresses
+  val genInit = Module(new SequenceGenerator(addrBits)).io
+  genInit.start := Bool(false)
+  genInit.init := UInt(0)
+  genInit.count := UInt(p.depth)
+  genInit.step := UInt(1)
+  genInit.seq.ready := initReqQ.enq.ready
+  initReqQ.enq.valid := genInit.seq.valid
+  initReqQ.enq.bits.value := UInt(0)
+  initReqQ.enq.bits.ind := genInit.seq.bits
+  // reducer for init completion detection
+  val finInit = Module(new StreamReducer(p.dataBits, 0, {_+_})).io
+  finInit.start := Bool(false)
+  finInit.byteCount := UInt(p.depth * p.dataBits/8)
+  finInit.streamIn.valid := initRspQ.deq.valid
+  finInit.streamIn.bits := UInt(0)
+  initRspQ.deq.ready := finInit.streamIn.ready
 
-  // use reducer for completion detection in init
-  val initOK = Module(new StreamReducer(p.dataBits, 0, {_+_})).io
-  initOK.start := Bool(false)
-  initOK.byteCount := UInt(p.depth * p.dataBits/8)
-  initOK.streamIn.valid := bramw.contextSaveRsp.valid
-  initOK.streamIn.bits := UInt(0)
-
+  // components for flush and the load port
+  val flushReqQ = Module(new Queue(io.contextLoadReq.bits, 2)).io
+  val flushRspQ = Module(new Queue(io.contextLoadRsp.bits, 2)).io
+  val loadSel = UInt(width = 1)
+  loadSel := UInt(0)
+  val loadReqs = Seq(io.contextLoadReq, flushReqQ.deq)
+  val loadRsps = Seq(io.contextLoadRsp, flushRspQ.enq)
+  DecoupledInputMux(loadSel, loadReqs) <> bramw.contextLoadReq
+  bramw.contextLoadRsp <> DecoupledOutputDemux(loadSel, loadRsps)
+  // sequence generator for flush addresses
+  val genFlush = Module(new SequenceGenerator(addrBits)).io
+  genFlush.start := Bool(false)
+  genFlush.init := UInt(0)
+  genFlush.count := UInt(p.depth)
+  genFlush.step := UInt(1)
+  genFlush.seq.ready := flushReqQ.enq.ready
+  flushReqQ.enq.valid := genFlush.seq.valid
+  flushReqQ.enq.bits.value := UInt(0)
+  flushReqQ.enq.bits.ind := genFlush.seq.bits
   // StreamWriter for flushing
   val flush = Module(new StreamWriter(new StreamWriterParams(
     streamWidth = p.dataBits, mem = p.mrp, chanID = 0
@@ -46,8 +78,9 @@ class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
   flush.start := Bool(false)
   flush.baseAddr := io.contextBase
   flush.byteCount := UInt(p.depth * p.dataBits/8)
-  flush.in.valid := bramw.contextLoadRsp.valid
-  flush.in.bits := bramw.contextLoadRsp.bits.vectorVal
+  flush.in.valid := flushRspQ.deq.valid
+  flush.in.bits := flushRspQ.deq.bits.matrixVal
+  flushRspQ.deq.ready := flush.in.ready
   // give the main mem write channel to the StreamWriter
   flush.req <> io.mainMem.memWrReq
   flush.wdat <> io.mainMem.memWrDat
@@ -55,14 +88,6 @@ class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
 
   val sActive :: sInit :: sFlush :: sFinished :: Nil = Enum(UInt(), 4)
   val regState = Reg(init = UInt(sActive))
-
-  when (regState != sActive) {
-    // disable extern context save/load pipes when in init or flush
-    io.contextLoadRsp.valid := Bool(false)
-    io.contextSaveRsp.valid := Bool(false)
-    io.contextLoadReq.ready := Bool(false)
-    io.contextSaveReq.ready := Bool(false)
-  }
 
   switch(regState) {
     is(sActive) {
@@ -73,30 +98,17 @@ class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
     }
 
     is(sInit) {
-      // connect addrgen to contextSave requests
-      addrgen.start := Bool(true)
-      addrgen.seq.ready := bramw.contextSaveReq.ready
-      bramw.contextSaveReq.bits.ind := addrgen.seq.bits
-      bramw.contextSaveReq.bits.value := UInt(0)  // init value
-      bramw.contextSaveReq.valid := addrgen.seq.valid
-      // connect contextSave responses to reducers to count them
-      initOK.start := Bool(true)
-      bramw.contextSaveRsp.ready := initOK.streamIn.ready
+      saveSel := UInt(1)  // set save channel muxes
+      genInit.start := Bool(true)
+      finInit.start := Bool(true)
 
-      when (initOK.finished) { regState := sFinished}
+      when (finInit.finished) { regState := sFinished}
     }
 
     is(sFlush) {
-      // TODO implement flush logic with main memory accesses
-      // connect addrgen to contextLoad requests
-      addrgen.start := Bool(true)
-      addrgen.seq.ready := bramw.contextLoadReq.ready
-      bramw.contextLoadReq.bits.ind := addrgen.seq.bits
-      bramw.contextLoadReq.bits.value := UInt(0) // old context unused
-      bramw.contextLoadReq.valid := addrgen.seq.valid
-      // StreamWriter generate main mem write requests from load responses
+      loadSel := UInt(1)  // set load channel muxes
+      genFlush.start := Bool(true)
       flush.start := Bool(true)
-      bramw.contextLoadRsp.ready := flush.in.ready
 
       when (flush.finished) { regState := sFinished}
     }
