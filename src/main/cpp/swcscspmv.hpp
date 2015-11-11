@@ -20,7 +20,7 @@ public:
     unsigned int cols = m_A->getCols();
     SpMVInd * colPtr = m_A->getIndPtrs();
     SpMVInd * rowInds = m_A->getInds();
-    SpMVVal * nzData = m_A->getNzData();
+    SpMVVal * nzData = m_A->getNZData();
     for(SpMVInd col = 0; col < cols; col++) {
       for(SpMVInd ep = colPtr[col]; ep < colPtr[col+1]; ep++) {
         SpMVInd rowInd = rowInds[ep];

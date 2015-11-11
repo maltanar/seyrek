@@ -3,18 +3,32 @@
 
 #include <string>
 
+extern void * readMatrixData(std::string name, std::string component);
+
+typedef struct {
+  unsigned int rows;
+  unsigned int cols;
+  unsigned int nz;
+  unsigned int startingRow;
+  unsigned int startingCol;
+  unsigned int bytesPerInd;
+  unsigned int bytesPerVal;
+} SparseMatrixMetadata;
+
+
 template <class SpMVInd, class SpMVVal>
 class CSC {
 public:
+
   CSC() {
-    m_nz = 0; m_cols = 0; m_rows = 0;
-    m_startingCol = 0; m_startingRow = 0;
+    m_metadata = 0;
     m_indPtrs = 0; m_inds = 0; m_nzData = 0;
     m_name = "<not initialized>";
   }
 
   virtual ~CSC(){
-    if(m_nz) {
+    if(m_metadata) {
+      delete m_metadata;
       delete [] m_indPtrs;
       delete [] m_inds;
       delete [] m_nzData;
@@ -24,25 +38,47 @@ public:
   void printSummary() {
     std::cout << "Matrix summary" << std::endl;
     std::cout << "name = " << m_name << std::endl;
-    std::cout << "#rows = " << m_rows << std::endl;
-    std::cout << "#cols = " << m_cols << std::endl;
-    std::cout << "#nz = " << m_nz << std::endl;
+    std::cout << "#rows = " << m_metadata->rows << std::endl;
+    std::cout << "#cols = " << m_metadata->cols << std::endl;
+    std::cout << "#nz = " << m_metadata->nz << std::endl;
   }
 
   bool isSquare(){
-    return m_cols == m_rows;
+    return m_metadata->cols == m_metadata->rows;
   }
 
-  void setName(std::string name) {m_name = name;};
-  std::string getName() {return m_name;};
+  void setName(std::string name) {m_name = name;}
+  std::string getName() {return m_name;}
+
+  static CSC * load(std::string name) {
+    SparseMatrixMetadata * md = (SparseMatrixMetadata *)readMatrixData(name, "meta");
+    if(md->bytesPerInd != sizeof(SpMVInd)) {
+        throw "bytesPerInd mismatch in CSC::load";
+    }
+    if(md->bytesPerVal != sizeof(SpMVVal)) {
+        throw "bytesPerVal mismatch in CSC::load";
+    }
+    CSC * ret = new CSC();
+    ret->m_metadata = md;
+    ret->m_indPtrs = (SpMVInd *)readMatrixData(name, "indptr");
+    if(!ret->m_indPtrs) throw "could not load indptr in CSC::load";
+    ret->m_inds = (SpMVInd *)readMatrixData(name, "inds");
+    if(!ret->m_inds) throw "could not load inds in CSC::load";
+    ret->m_nzData = (SpMVVal *)readMatrixData(name, "nzdata");
+    if(!ret->m_nzData) throw "could not load nzdata in CSC::load";
+    ret->m_name = name;
+
+    return ret;
+  }
 
   static CSC * eye(unsigned int dim) {
     CSC * ret = new CSC();
-    ret->m_startingRow = 0;
-    ret->m_startingCol = 0;
-    ret->m_cols = dim;
-    ret->m_rows = dim;
-    ret->m_nz = dim;
+    ret->m_metadata = new SparseMatrixMetadata;
+    ret->m_metadata->startingRow = 0;
+    ret->m_metadata->startingCol = 0;
+    ret->m_metadata->cols = dim;
+    ret->m_metadata->rows = dim;
+    ret->m_metadata->nz = dim;
     ret->m_indPtrs = new SpMVInd[dim+1];
     ret->m_inds = new SpMVInd[dim];
     ret->m_nzData = new SpMVVal[dim];
@@ -59,7 +95,7 @@ public:
   }
 
   unsigned int getCols() const {
-    return m_cols;
+    return m_metadata->cols;
   }
 
   SpMVInd* getIndPtrs() const {
@@ -70,24 +106,21 @@ public:
     return m_inds;
   }
 
-  unsigned int getNz() const {
-    return m_nz;
+  unsigned int getNNZ() const {
+    return m_metadata->nz;
   }
 
-  SpMVVal* getNzData() const {
+  SpMVVal* getNZData() const {
     return m_nzData;
   }
 
   unsigned int getRows() const {
-    return m_rows;
+    return m_metadata->rows;
   }
 
 protected:
-  unsigned int m_rows;
-  unsigned int m_cols;
-  unsigned int m_nz;
-  unsigned int m_startingRow;
-  unsigned int m_startingCol;
+  SparseMatrixMetadata * m_metadata;
+
   SpMVInd * m_indPtrs;
   SpMVInd * m_inds;
   SpMVVal * m_nzData;

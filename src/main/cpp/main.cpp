@@ -22,6 +22,7 @@ public:
 int main(int argc, char *argv[])
 {
   cout << "Hello World!" << endl;
+  CSC<SpMVInd, SpMVVal> * B = CSC<SpMVInd, SpMVVal>::load("cant");
   RegSpMV t;
 
   CSC<SpMVInd, SpMVVal> * A = CSC<SpMVInd, SpMVVal>::eye(10);
