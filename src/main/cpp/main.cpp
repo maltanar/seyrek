@@ -11,33 +11,6 @@ typedef unsigned int SpMVVal;
 
 class RegSpMV: public AddMulSemiring<SpMVInd, SpMVVal>, public SWSpMV<SpMVInd, SpMVVal> {
 public:
-  RegSpMV() {
-    m_cols = 10;
-    m_rows = 10;
-    m_nnz = 10;
-    m_colPtr = new SpMVInd[m_cols+1];
-    m_rowInd = new SpMVInd[m_nnz];
-    m_nzData = new SpMVVal[m_nnz];
-    m_x = new SpMVVal[m_rows];
-    m_y = new SpMVVal[m_cols];
-    for(SpMVInd i = 0; i < m_nnz; i++) {
-      m_colPtr[i] = i;
-      m_rowInd[i] = i;
-      m_nzData[i] = 1;
-      m_x[i] = i+1;
-      m_y[i] = 0;
-    }
-    m_colPtr[m_cols] = m_cols;
-  }
-
-  ~RegSpMV() {
-    delete [] m_colPtr;
-    delete [] m_nzData;
-    delete [] m_rowInd;
-    delete [] m_x;
-    delete [] m_y;
-  }
-
   virtual unsigned int statInt(std::string name) { return 0;}
 
   virtual std::vector<std::string> statKeys() {
@@ -51,11 +24,28 @@ int main(int argc, char *argv[])
   cout << "Hello World!" << endl;
   RegSpMV t;
 
+  CSC<SpMVInd, SpMVVal> * A = CSC<SpMVInd, SpMVVal>::eye(10);
+  SpMVVal * x = new SpMVVal[10];
+  SpMVVal * y = new SpMVVal[10];
+  for(int i = 0; i < 10; i++) {
+      x[i] = 1;
+      y[i] = 0;
+    }
+
+  t.setA(A);
+  t.setx(x);
+  t.sety(y);
+
   t.exec();
-  SpMVVal * y = t.getY();
+
   for(unsigned int i = 0; i < 10; i++) {
       cout << i << " " << y[i] << endl;
   }
+
+  delete A;
+  delete x;
+  delete y;
+
   return 0;
 }
 

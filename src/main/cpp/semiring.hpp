@@ -4,6 +4,8 @@
 // abstract base class template for defining semiring add and mul
 // note that the op coordinates are also passed to the implementations,
 // if the user wants to specialize the operations based on coordinate
+// TODO also expose semiring's own 0 and 1 definitions
+
 template <class SpMVInd, class SpMVVal>
 class Semiring {
 public:

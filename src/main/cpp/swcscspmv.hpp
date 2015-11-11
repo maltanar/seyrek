@@ -9,21 +9,22 @@
 template <class SpMVInd, class SpMVVal>
 class SWSpMV : public virtual CSCSpMV<SpMVInd, SpMVVal> {
 protected:
-  using CSCSpMV<SpMVInd, SpMVVal>::m_cols;
-  using CSCSpMV<SpMVInd, SpMVVal>::m_colPtr;
-  using CSCSpMV<SpMVInd, SpMVVal>::m_rowInd;
+  using CSCSpMV<SpMVInd, SpMVVal>::m_A;
   using CSCSpMV<SpMVInd, SpMVVal>::m_y;
   using CSCSpMV<SpMVInd, SpMVVal>::m_x;
-  using CSCSpMV<SpMVInd, SpMVVal>::m_nzData;
 
 public:
   virtual ~SWSpMV() {};
 
   virtual bool exec() {
-    for(SpMVInd col = 0; col < m_cols; col++) {
-      for(SpMVInd ep = m_colPtr[col]; ep < m_colPtr[col+1]; ep++) {
-        SpMVInd rowInd = m_rowInd[ep];
-        SpMVVal mulRes = this->mul(m_nzData[ep], m_x[col], rowInd, col);
+    unsigned int cols = m_A->getCols();
+    SpMVInd * colPtr = m_A->getIndPtrs();
+    SpMVInd * rowInds = m_A->getInds();
+    SpMVVal * nzData = m_A->getNzData();
+    for(SpMVInd col = 0; col < cols; col++) {
+      for(SpMVInd ep = colPtr[col]; ep < colPtr[col+1]; ep++) {
+        SpMVInd rowInd = rowInds[ep];
+        SpMVVal mulRes = this->mul(nzData[ep], m_x[col], rowInd, col);
         SpMVVal addRes = this->add(m_y[rowInd], mulRes, rowInd, col);
         m_y[rowInd] = addRes;
       }
