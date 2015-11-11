@@ -7,6 +7,29 @@ using namespace std;
 typedef unsigned int SpMVInd;
 typedef unsigned int SpMVVal;
 
+#include <stdio.h>
+
+void * readMatrixData(std::string name, std::string component) {
+  string matricesBase = "/home/maltanar/seyrek/matrices";
+  string fileName = matricesBase + "/" + name + "/" + name + "-" + component + ".bin";
+  FILE *f = fopen(fileName.c_str(), "rb");
+  if(!f) throw (string("Could not open file: ") + fileName).c_str();
+  fseek(f, 0, SEEK_END);
+  unsigned int fsize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+
+  void * buf = new char[fsize];
+  unsigned int r = fread(buf, 1, fsize, f);
+
+  if(r != fsize) throw "Read error";
+
+  fclose(f);
+
+  return buf;
+}
+
+
+
 // little demo of how Seyrek's software side semiring comps might look like
 
 class RegSpMV: public AddMulSemiring<SpMVInd, SpMVVal>, public SWSpMV<SpMVInd, SpMVVal> {
@@ -21,32 +44,39 @@ public:
 
 int main(int argc, char *argv[])
 {
-  cout << "Hello World!" << endl;
-  CSC<SpMVInd, SpMVVal> * B = CSC<SpMVInd, SpMVVal>::load("cant");
-  RegSpMV t;
+  try {
+    cout << "Hello World!" << endl;
+    CSC<SpMVInd, SpMVVal> * B = CSC<SpMVInd, SpMVVal>::load("circuit204-int");
+    RegSpMV t;
 
-  CSC<SpMVInd, SpMVVal> * A = CSC<SpMVInd, SpMVVal>::eye(10);
-  SpMVVal * x = new SpMVVal[10];
-  SpMVVal * y = new SpMVVal[10];
-  for(int i = 0; i < 10; i++) {
-      x[i] = 1;
-      y[i] = 0;
+    CSC<SpMVInd, SpMVVal> * A = CSC<SpMVInd, SpMVVal>::eye(10);
+    SpMVVal * x = new SpMVVal[10];
+    SpMVVal * y = new SpMVVal[10];
+    for(int i = 0; i < 10; i++) {
+        x[i] = 1;
+        y[i] = 0;
+      }
+
+    t.setA(A);
+    t.setx(x);
+    t.sety(y);
+
+    t.exec();
+
+    for(unsigned int i = 0; i < 10; i++) {
+        cout << i << " " << y[i] << endl;
     }
 
-  t.setA(A);
-  t.setx(x);
-  t.sety(y);
+    delete A;
+    delete x;
+    delete y;
 
-  t.exec();
+    return 0;
 
-  for(unsigned int i = 0; i < 10; i++) {
-      cout << i << " " << y[i] << endl;
+  } catch(char const * err) {
+    cerr << "Exception: " << err << endl;
+    return 1;
   }
 
-  delete A;
-  delete x;
-  delete y;
-
-  return 0;
 }
 
