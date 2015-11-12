@@ -10,6 +10,7 @@ import TidbitsStreams._
 trait SeyrekParams {
   def indWidth: Int
   def valWidth: Int
+  val ptrWidth: Int = 64  // large enough for big&small platforms
   def mrp: MemReqParams
   // context memory creation
   def makeContextMemory: () => ContextMem
@@ -99,11 +100,11 @@ extends Module {
 // bundles and types used for interfaces and control/status
 
 class CSCSpMV(p: SeyrekParams) extends Bundle {
-  val colPtr = UInt(width = p.mrp.addrWidth)
-  val rowInd = UInt(width = p.mrp.addrWidth)
-  val nzData = UInt(width = p.mrp.addrWidth)
-  val inpVec = UInt(width = p.mrp.addrWidth)
-  val outVec = UInt(width = p.mrp.addrWidth)
+  val colPtr = UInt(width = p.ptrWidth)
+  val rowInd = UInt(width = p.ptrWidth)
+  val nzData = UInt(width = p.ptrWidth)
+  val inpVec = UInt(width = p.ptrWidth)
+  val outVec = UInt(width = p.ptrWidth)
 
   val rows = UInt(width = p.indWidth)
   val cols = UInt(width = p.indWidth)
