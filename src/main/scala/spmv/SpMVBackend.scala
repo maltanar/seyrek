@@ -54,7 +54,6 @@ class SpMVBackend(p: SeyrekParams) extends Module {
     WorkUnit(vi.value, v, vi.ind) }
   StreamJoin(nzAndInd, repeatedVec, p.wu, makeWorkUnit) <> io.workUnits
 
-
   // interleave all sequential streams onto a single memory port
   // TODO make the stream<->port matching more configurable
   // TODO make convenience function/object for generating several readers
@@ -95,7 +94,7 @@ class SpMVBackend(p: SeyrekParams) extends Module {
 
   readInpVec.io.start := startRegular
   readInpVec.io.baseAddr := io.csc.inpVec
-  readInpVec.io.byteCount := bytesVal * io.csc.rows
+  readInpVec.io.byteCount := bytesVal * io.csc.cols
 
   val seqReaders = Array[StreamReader](readColPtr, readRowInd, readNZData, readInpVec)
 
@@ -105,6 +104,4 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   when (io.mode === SeyrekModes.START_REGULAR) {
     io.finished := seqReaders.map(x => x.io.finished).reduce(_ & _)
   }
-
-  // TODO handle other modes
 }

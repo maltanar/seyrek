@@ -56,10 +56,17 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
       }
 
       is(sRunning) {
+        // count completed operations
+        when (sched.io.compl.ready & sched.io.compl.valid) {
+          regCompletedOps := regCompletedOps + UInt(1)
+        }
         when (regCompletedOps === io.csc.nz) { regState := sFinished }
       }
 
-      is(sFinished) { when (!io.start) {regState := sIdle} }
+      is(sFinished) {
+        io.finished := Bool(true)
+        when (!io.start) {regState := sIdle}
+      }
   }
 
   // TODO add statistics
