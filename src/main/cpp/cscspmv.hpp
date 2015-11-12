@@ -10,6 +10,7 @@
 template <class SpMVInd, class SpMVVal>
 class CSCSpMV : public virtual Semiring<SpMVInd, SpMVVal> {
 public:
+  CSCSpMV() {m_A = 0; m_x = 0; m_y = 0;}
   virtual ~CSCSpMV() {};
 
   virtual void setA(CSC<SpMVInd, SpMVVal> * A) {m_A = A;}
