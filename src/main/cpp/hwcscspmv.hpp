@@ -1,8 +1,12 @@
 #ifndef HWCSCSPMV_HPP
 #define HWCSCSPMV_HPP
 
+#include <vector>
+#include <string>
+
 #include "cscspmv.hpp"
 #include "wrapperregdriver.h"
+#include "commonsemirings.hpp"
 
 // implements the exec() for software-based SpMV-over-semirings
 // add() and mul() must be implemented in the derived class
@@ -12,7 +16,7 @@
 // are automatically called every time
 
 template <class SpMVInd, class SpMVVal>
-class HWSpMV : public virtual CSCSpMV<SpMVInd, SpMVVal> {
+class HWSpMV : public virtual CSCSpMV<SpMVInd, SpMVVal>, public AddMulSemiring<SpMVInd, SpMVVal> {
 protected:
   using CSCSpMV<SpMVInd, SpMVVal>::m_A;
   using CSCSpMV<SpMVInd, SpMVVal>::m_y;
@@ -52,49 +56,6 @@ protected:
   unsigned int m_xSize;
   unsigned int m_ySize;
 
-  virtual void setA(CSC<SpMVInd, SpMVVal> * A) {
-    // free the old accel buffers first, if alloc'd
-    if(m_acc_indPtrs != 0) {
-      m_platform->deallocAccelBuffer((void *) m_acc_indPtrs);
-      m_platform->deallocAccelBuffer((void *) m_acc_inds);
-      m_platform->deallocAccelBuffer((void *) m_acc_nzData);
-    }
-    if(m_acc_x) m_platform->deallocAccelBuffer((void *) m_acc_x);
-    if(m_acc_y) m_platform->deallocAccelBuffer((void *) m_acc_y);
-    // call base class impl
-    CSCSpMV<SpMVInd, SpMVVal>::setA(A);
-    // calculate the associated buffer sizes
-    m_indPtrSize = sizeof(SpMVInd) * (m_A->getCols() + 1);
-    m_indSize = sizeof(SpMVInd) * m_A->getNNZ();
-    m_nzDataSize = sizeof(SpMVVal) * m_A->getNNZ();
-    m_xSize = sizeof(SpMVVal) * m_A->getCols();
-    m_ySize = sizeof(SpMVVal) * m_A->getRows();
-    // alloc new accel buffers
-    m_acc_indPtrs = (SpMVInd *) m_platform->allocAccelBuffer(indPtrSize);
-    m_acc_inds = (SpMVInd *) m_platform->allocAccelBuffer(indSize);
-    m_acc_nzData = (SpMVVal *) m_platform->allocAccelBuffer(nzDataSize);
-    m_acc_x = (SpMVVal *) m_platform->allocAccelBuffer(xSize);
-    m_acc_y = (SpMVVal *) m_platform->allocAccelBuffer(ySize);
-    // copy matrix data host -> accel
-    m_platform->copyBufferHostToAccel((void *)m_A->getIndPtrs(), (void *) m_acc_indPtrs, indPtrSize);
-    m_platform->copyBufferHostToAccel((void *)m_A->getInds(), (void *) m_acc_inds, indSize);
-    m_platform->copyBufferHostToAccel((void *)m_A->getNZData(), (void *) m_acc_nzData, nzDataSize);
-  }
-
-  virtual void setx(SpMVVal * x) {
-    // call base class impl
-    CSCSpMV<SpMVInd, SpMVVal>::setx(x);
-    // copy data
-    m_platform->copyBufferHostToAccel((void *)x, (void *)m_acc_x, xSize);
-  }
-
-  virtual void sety(SpMVVal * y) {
-    // call base class impl
-    CSCSpMV<SpMVInd, SpMVVal>::sety(y);
-    // copy data host -> accel
-    m_platform->copyBufferHostToAccel((void *)y, (void *)m_acc_y, ySize);
-  }
-
   // mode settings for Seyrek
   typedef enum {
     START_REGULAR = 0,
@@ -129,8 +90,61 @@ public:
   }
   virtual ~HWSpMV() {m_platform->detach();}
 
+  virtual void setA(CSC<SpMVInd, SpMVVal> * A) {
+    // free the old accel buffers first, if alloc'd
+    if(m_acc_indPtrs != 0) {
+      m_platform->deallocAccelBuffer((void *) m_acc_indPtrs);
+      m_platform->deallocAccelBuffer((void *) m_acc_inds);
+      m_platform->deallocAccelBuffer((void *) m_acc_nzData);
+    }
+    if(m_acc_x) m_platform->deallocAccelBuffer((void *) m_acc_x);
+    if(m_acc_y) m_platform->deallocAccelBuffer((void *) m_acc_y);
+    // call base class impl
+    CSCSpMV<SpMVInd, SpMVVal>::setA(A);
+    // calculate the associated buffer sizes
+    m_indPtrSize = sizeof(SpMVInd) * (m_A->getCols() + 1);
+    m_indSize = sizeof(SpMVInd) * m_A->getNNZ();
+    m_nzDataSize = sizeof(SpMVVal) * m_A->getNNZ();
+    m_xSize = sizeof(SpMVVal) * m_A->getCols();
+    m_ySize = sizeof(SpMVVal) * m_A->getRows();
+    // alloc new accel buffers
+    m_acc_indPtrs = (SpMVInd *) m_platform->allocAccelBuffer(m_indPtrSize);
+    m_acc_inds = (SpMVInd *) m_platform->allocAccelBuffer(m_indSize);
+    m_acc_nzData = (SpMVVal *) m_platform->allocAccelBuffer(m_nzDataSize);
+    m_acc_x = (SpMVVal *) m_platform->allocAccelBuffer(m_xSize);
+    m_acc_y = (SpMVVal *) m_platform->allocAccelBuffer(m_ySize);
+    // copy matrix data host -> accel
+    m_platform->copyBufferHostToAccel((void *)m_A->getIndPtrs(), (void *) m_acc_indPtrs, m_indPtrSize);
+    m_platform->copyBufferHostToAccel((void *)m_A->getInds(), (void *) m_acc_inds, m_indSize);
+    m_platform->copyBufferHostToAccel((void *)m_A->getNZData(), (void *) m_acc_nzData, m_nzDataSize);
+    // set up matrix metadata in the accelerator
+    set_csc_colPtr((AccelDblReg) m_acc_indPtrs);
+    set_csc_cols(m_A->getCols());
+    set_csc_inpVec((AccelDblReg) m_acc_x);
+    set_csc_nz(m_A->getNNZ());
+    set_csc_nzData((AccelDblReg) m_A->getNZData());
+    set_csc_outVec((AccelDblReg) m_acc_y);
+    set_csc_rowInd((AccelDblReg) m_acc_inds);
+    set_csc_rows(m_A->getRows());
+  }
+
+  virtual void setx(SpMVVal * x) {
+    // call base class impl
+    CSCSpMV<SpMVInd, SpMVVal>::setx(x);
+    // copy data
+    m_platform->copyBufferHostToAccel((void *)x, (void *)m_acc_x, m_xSize);
+  }
+
+  virtual void sety(SpMVVal * y) {
+    // call base class impl
+    CSCSpMV<SpMVInd, SpMVVal>::sety(y);
+    // copy data host -> accel
+    m_platform->copyBufferHostToAccel((void *)y, (void *)m_acc_y, m_ySize);
+  }
+
   virtual bool exec() {
     if(!m_A || !m_x || !m_y) throw "One or more SpMV data comps not assigned";
+    // make sure x and y are up to date on the accel
     setx(m_x);
     sety(m_y);
     // TODO may not be always needed to do init and flush
@@ -138,8 +152,16 @@ public:
     execAccelMode(START_REGULAR);
     execAccelMode(START_FLUSH);
     // copy back y data to the host side
-    m_platform->copyBufferAccelToHost((void *)m_acc_y, (void *)m_y, ySize);
+    m_platform->copyBufferAccelToHost((void *)m_acc_y, (void *)m_y, m_ySize);
     return true;
+  }
+
+  // TODO expose proper stats
+  virtual unsigned int statInt(std::string name) { return 0;}
+
+  virtual std::vector<std::string> statKeys() {
+    std::vector<std::string> keys;
+    keys.push_back("matrix");
   }
 };
 

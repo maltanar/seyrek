@@ -1,11 +1,14 @@
 #include <iostream>
 #include "swcscspmv.hpp"
+#include "hwcscspmv.hpp"
 #include "commonsemirings.hpp"
+#include "platform.h"
+#include <string.h>
 
 using namespace std;
 
 typedef unsigned int SpMVInd;
-typedef unsigned int SpMVVal;
+typedef int SpMVVal;
 
 #include <stdio.h>
 
@@ -30,8 +33,6 @@ void * readMatrixData(std::string name, std::string component) {
 
 
 
-// little demo of how Seyrek's software side semiring comps might look like
-
 class RegSpMV: public AddMulSemiring<SpMVInd, SpMVVal>, public SWSpMV<SpMVInd, SpMVVal> {
 public:
   virtual unsigned int statInt(std::string name) { return 0;}
@@ -45,31 +46,51 @@ public:
 int main(int argc, char *argv[])
 {
   try {
-    cout << "Hello World!" << endl;
-    CSC<SpMVInd, SpMVVal> * B = CSC<SpMVInd, SpMVVal>::load("circuit204-int");
-    RegSpMV t;
 
-    CSC<SpMVInd, SpMVVal> * A = CSC<SpMVInd, SpMVVal>::eye(10);
-    SpMVVal * x = new SpMVVal[10];
-    SpMVVal * y = new SpMVVal[10];
-    for(int i = 0; i < 10; i++) {
+    CSC<SpMVInd, SpMVVal> * A = CSC<SpMVInd, SpMVVal>::load("circuit204-int");
+    SpMVVal * x = new SpMVVal[A->getCols()];
+    SpMVVal * y = new SpMVVal[A->getRows()];
+    for(int i = 0; i < A->getRows(); i++) {
         x[i] = 1;
         y[i] = 0;
-      }
-
-    t.setA(A);
-    t.setx(x);
-    t.sety(y);
-
-    t.exec();
-
-    for(unsigned int i = 0; i < 10; i++) {
-        cout << i << " " << y[i] << endl;
     }
 
+    WrapperRegDriver * platform = initPlatform();
+    HWSpMV<SpMVInd, SpMVVal> * hw = new HWSpMV<SpMVInd, SpMVVal>("SampleSpMV", platform);
+
+    hw->setA(A);
+    hw->setx(x);
+    hw->sety(y);
+
+    hw->exec();
+
+    cout << "Completed, checking result..." << endl;
+
+    RegSpMV chk;
+    chk.setA(A);
+    chk.setx(x);
+    SpMVVal * goldeny = new SpMVVal[A->getRows()];
+    for(int i = 0; i < A->getRows(); i++) {
+        goldeny[i] = 0;
+    }
+    chk.sety(goldeny);
+    chk.exec();
+    int res = memcmp(y, goldeny, A->getRows() * sizeof(SpMVVal));
+    cout << "memcmp result: " << res << endl;
+
+    if(res != 0)
+      for(int i = 0; i < A->getRows(); i++) {
+        if(goldeny[i] != y[i]) cout << i << " golden: " << goldeny[i] << " res: " << y[i] << endl;
+      }
+
+    delete hw;
+    delete [] x;
+    delete [] y;
+    delete [] goldeny;
     delete A;
-    delete x;
-    delete y;
+
+
+    deinitPlatform(platform);
 
     return 0;
 
