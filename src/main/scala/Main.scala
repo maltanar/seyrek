@@ -12,6 +12,7 @@ import TidbitsPlatformWrapper._
 class SampleSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val indWidth = 32
   val valWidth = 32
+  val accelName = "SampleSpMV"
   val mrp = p.toMemReqParams()
   val makeContextMemory = { () =>
     new BRAMContextMem(new BRAMContextMemParams(

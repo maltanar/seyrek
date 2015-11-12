@@ -8,6 +8,7 @@ import TidbitsStreams._
 // TODO add ordering params to semirings as well?
 
 trait SeyrekParams {
+  def accelName: String
   def indWidth: Int
   def valWidth: Int
   val ptrWidth: Int = 64  // large enough for big&small platforms

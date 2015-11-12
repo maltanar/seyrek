@@ -12,6 +12,7 @@ extends GenericAccelerator(p) {
     val finished = Bool(OUTPUT)
     val csc = new CSCSpMV(pSeyrek).asInput
   }
+  setName(pSeyrek.accelName)
   io.signature := makeDefaultSignature()
 
   val backend = Module(new SpMVBackend(pSeyrek))
