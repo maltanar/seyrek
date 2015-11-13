@@ -21,8 +21,8 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
   val sched = Module(p.makeScheduler())
 
-  // (v, v, i) -> [mul] -> (n = v*v, i)
-  io.workUnits <> mul.in
+  // (v, v, i) -> [queue] -> [mul] -> (n = v*v, i)
+  Queue(io.workUnits, 2) <> mul.in
 
   // (n, i) -> [queue] -> [scheduler]
   Queue(mul.out, 2) <> sched.io.instr
