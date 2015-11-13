@@ -122,7 +122,7 @@ public:
     set_csc_cols(m_A->getCols());
     set_csc_inpVec((AccelDblReg) m_acc_x);
     set_csc_nz(m_A->getNNZ());
-    set_csc_nzData((AccelDblReg) m_A->getNZData());
+    set_csc_nzData((AccelDblReg) m_acc_nzData);
     set_csc_outVec((AccelDblReg) m_acc_y);
     set_csc_rowInd((AccelDblReg) m_acc_inds);
     set_csc_rows(m_A->getRows());
