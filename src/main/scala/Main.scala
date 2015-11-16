@@ -9,10 +9,10 @@ import TidbitsAXI._
 import TidbitsDMA._
 import TidbitsPlatformWrapper._
 
-class SampleSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
+class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val indWidth = 32
   val valWidth = 32
-  val accelName = "SampleSpMV"
+  val accelName = "UInt32BRAMSpMV"
   val mrp = p.toMemReqParams()
   val makeContextMemory = { () =>
     new BRAMContextMem(new BRAMContextMemParams(
@@ -40,7 +40,7 @@ object SeyrekMainObj {
 
   val accelMap: AccelMap  = Map(
     "TestBRAMContextMem" -> {p => new TestBRAMContextMem(p)},
-    "SampleSpMV" -> {p => new SpMVAccel(p, new SampleSpMVParams(p))}
+    "UInt32BRAMSpMV" -> {p => new SpMVAccel(p, new UInt32BRAMSpMVParams(p))}
   )
 
   val platformMap: PlatformMap = Map(
@@ -82,7 +82,12 @@ object SeyrekMainObj {
     val files = Array("wrapperregdriver.h", "platform-tester.cpp",
       "platform.h", "testerdriver.hpp")
     for(f <- files) { fileCopy(regDrvRoot + f, "emulator/" + f) }
-
+    // copy Seyrek support files
+    val seyrekDrvRoot = "src/main/cpp/"
+    val seyrekFiles = Array("commonsemirings.hpp", "hwcscspmv.hpp",
+      "semiring.hpp", "wrapperregdriver.h", "csc.hpp", "main.cpp",
+      "cscspmv.hpp", "platform.h", "swcscspmv.hpp", "seyrek-tester.cpp")
+    for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, "emulator/" + f) }
   }
 
   def makeDriver(args: Array[String]) = {
