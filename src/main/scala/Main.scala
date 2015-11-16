@@ -32,6 +32,29 @@ class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val makeScheduler = { () => new InOrderScheduler(this) }
 }
 
+class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val indWidth = 32
+  val valWidth = 64
+  val accelName = "UInt64ExtSpMV"
+  val mrp = p.toMemReqParams()
+  val makeContextMemory = { () =>
+    new ExtContextMem(new ExtContextMemParams(
+      readTxns = 1, writeTxns = 1, chanID = 4,
+      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
+    ))
+  }
+
+  val makeSemiringAdd = { () =>
+    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
+  }
+
+  val makeSemiringMul = { () =>
+    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a*b})
+  }
+  val issueWindow = 4
+  val makeScheduler = { () => new InOrderScheduler(this) }
+}
+
 object SeyrekMainObj {
   type AccelInstFxn = PlatformWrapperParams => GenericAccelerator
   type AccelMap = Map[String, AccelInstFxn]
@@ -39,7 +62,8 @@ object SeyrekMainObj {
   type PlatformMap = Map[String, PlatformInstFxn]
 
   val accelMap: AccelMap  = Map(
-    "UInt32BRAMSpMV" -> {p => new SpMVAccel(p, new UInt32BRAMSpMVParams(p))}
+    "UInt32BRAM" -> {p => new SpMVAccel(p, new UInt32BRAMSpMVParams(p))},
+    "UInt64Ext" -> {p => new SpMVAccel(p, new UInt64ExtSpMVParams(p))}
   )
 
   val platformMap: PlatformMap = Map(

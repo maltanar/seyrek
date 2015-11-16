@@ -21,6 +21,8 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
   val sched = Module(p.makeScheduler())
 
+  // TODO do we really need queues at every step, and how big?
+
   // (v, v, i) -> [queue] -> [mul] -> (n = v*v, i)
   Queue(io.workUnits, 2) <> mul.in
 
@@ -28,17 +30,17 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   Queue(mul.out, 2) <> sched.io.instr
 
   // [scheduler] -> (n, i) -> [load context]
-  sched.io.issue <> io.contextLoadReq
+  Queue(sched.io.issue, 2) <> io.contextLoadReq
 
   // [load context] -> (o, n, i) -> [add]
-  io.contextLoadRsp <> add.in
+  Queue(io.contextLoadRsp, 2) <> add.in
 
   // [add] -> (s = o+n, i) -> [queue] -> [save context]
   Queue(add.out, 2) <> io.contextSaveReq
 
   // signal completion to remove from scheduler
   // [save context] -> i -> [scheduler]
-  io.contextSaveRsp <> sched.io.compl
+  Queue(io.contextSaveRsp, 2) <> sched.io.compl
 
   // completion logic
   io.finished := Bool(false)

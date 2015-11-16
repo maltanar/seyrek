@@ -20,6 +20,11 @@ class ExtContextMemParams(
 class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   val inOrder: Boolean = (p.readTxns == 1 && p.writeTxns == 1)
 
+  // ExtContextMem does not need flush or init
+  val flushOrInit =
+    (io.mode === SeyrekModes.START_INIT || io.mode === SeyrekModes.START_FLUSH)
+  io.finished := Reg(init=Bool(false), next=io.start & flushOrInit)
+
   // generate a comb. circuit for turning val-ind pairs' inds into
   // memory requests for accessing from the proper context mem addr
   def makeReadReq(r: ValIndPair, id: UInt): GenericMemoryRequest = {
