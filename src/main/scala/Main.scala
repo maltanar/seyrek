@@ -39,7 +39,6 @@ object SeyrekMainObj {
   type PlatformMap = Map[String, PlatformInstFxn]
 
   val accelMap: AccelMap  = Map(
-    "TestBRAMContextMem" -> {p => new TestBRAMContextMem(p)},
     "UInt32BRAMSpMV" -> {p => new SpMVAccel(p, new UInt32BRAMSpMVParams(p))}
   )
 

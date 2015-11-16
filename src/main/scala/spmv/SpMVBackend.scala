@@ -9,7 +9,7 @@ import TidbitsStreams._
 // - add init and flush modes (for ContextMemory)
 // - full system testing
 
-class SpMVIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
+class SpMVBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csc = new CSCSpMV(p).asInput
   // output to frontend
   val workUnits = Decoupled(p.wu)
@@ -19,7 +19,7 @@ class SpMVIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
 }
 
 class SpMVBackend(p: SeyrekParams) extends Module {
-  val io = new SpMVIO(p)
+  val io = new SpMVBackendIO(p)
 
   // instantiate StreamReaders for fetching the sequential SpMV streams
   // these will be feeding the frontend with data
