@@ -6,6 +6,7 @@ import TidbitsDMA._
 class ContextMemParams(
   val idBits: Int,
   val dataBits: Int,
+  val chanID: Int, // TODO permit a range of IDs instead, or let backend assign
   val mrp: MemReqParams
 )
 
@@ -24,7 +25,7 @@ class ContextMemIO(p: ContextMemParams) extends Bundle with SeyrekCtrlStat {
 
 // base abstract class for context storage memories
 
-abstract class ContextMem(p: ContextMemParams) extends Module {
+abstract class ContextMem(val p: ContextMemParams) extends Module {
   val io = new ContextMemIO(p)
 
   // whether the ContextMem responds to load/save commands in-order

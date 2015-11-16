@@ -14,7 +14,7 @@ class TestBRAMContextMem(p: PlatformWrapperParams) extends GenericAccelerator(p)
 
   val inst = Module(new BRAMContextMem(new BRAMContextMemParams(
     depth = 1024, readLatency = 1, writeLatency = 1,
-    idBits = 10, dataBits = 32, mrp = p.toMemReqParams()
+    idBits = 10, dataBits = 32, mrp = p.toMemReqParams(), chanID = 0
   ))).io
 
   inst.mainMem <> io.memPort(0)

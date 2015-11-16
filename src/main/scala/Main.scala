@@ -16,7 +16,7 @@ class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val mrp = p.toMemReqParams()
   val makeContextMemory = { () =>
     new BRAMContextMem(new BRAMContextMemParams(
-      depth = 1024, readLatency = 1, writeLatency = 1,
+      depth = 1024, readLatency = 1, writeLatency = 1, chanID = 4,
       idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
     ))
   }

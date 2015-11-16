@@ -14,14 +14,17 @@ class BRAMContextMemParams(
   val writeLatency: Int,
   idBits: Int,
   dataBits: Int,
+  chanID: Int,
   mrp: MemReqParams
-) extends ContextMemParams(idBits, dataBits, mrp)
+) extends ContextMemParams(idBits, dataBits, chanID, mrp)
 
 class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
   val inOrder = true
   val addrBits = log2Up(p.depth)
 
   io.finished := Bool(false)
+  io.mainMem.memRdReq.valid := Bool(false)
+  io.mainMem.memRdRsp.ready := Bool(false)
 
   // instantiate BRAM wrapper
   val bramw = Module(new BRAMWrapper(p)).io
@@ -74,7 +77,7 @@ class BRAMContextMem(p: BRAMContextMemParams) extends ContextMem(p) {
   flushReqQ.enq.bits.ind := genFlush.seq.bits
   // StreamWriter for flushing
   val flush = Module(new StreamWriter(new StreamWriterParams(
-    streamWidth = p.dataBits, mem = p.mrp, chanID = 0
+    streamWidth = p.dataBits, mem = p.mrp, chanID = p.chanID
   ))).io
   flush.start := Bool(false)
   flush.baseAddr := io.contextBase

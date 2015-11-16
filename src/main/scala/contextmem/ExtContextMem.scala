@@ -7,12 +7,11 @@ import TidbitsStreams._
 class ExtContextMemParams(
   val readTxns: Int,
   val writeTxns: Int,
-  val readIDBase: Int,
-  val writeIDBase: Int,
   idBits: Int,
   dataBits: Int,
+  chanID: Int,
   mrp: MemReqParams
-) extends ContextMemParams(idBits, dataBits, mrp)
+) extends ContextMemParams(idBits, dataBits, chanID, mrp)
 
 // TODO add support for multiple outstanding requests
 // TODO inst. reorder buffer depending on mem sys OoO-ness
@@ -51,7 +50,7 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
     val loadFork = Module(new StreamFork(
       genIn = io.contextLoadReq.bits, genA = io.contextLoadReq.bits,
       genB = GenericMemoryRequest(p.mrp), forkA = {x: ValIndPair => x},
-      forkB = {x: ValIndPair => makeReadReq(x, UInt(p.readIDBase))}
+      forkB = {x: ValIndPair => makeReadReq(x, UInt(p.chanID))}
     )).io
 
     io.contextLoadReq <> loadFork.in
@@ -76,7 +75,7 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
     val saveMemFork = Module(new StreamFork(
       genIn = io.contextSaveReq.bits, genA = GenericMemoryRequest(p.mrp),
       genB = UInt(width = p.dataBits),
-      forkA = {x: ValIndPair => makeWriteReq(x, UInt(p.writeIDBase))},
+      forkA = {x: ValIndPair => makeWriteReq(x, UInt(p.chanID))},
       forkB = {x: ValIndPair => x.value}
     )).io
 
