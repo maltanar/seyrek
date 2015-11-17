@@ -25,28 +25,6 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
     (io.mode === SeyrekModes.START_INIT || io.mode === SeyrekModes.START_FLUSH)
   io.finished := Reg(init=Bool(false), next=io.start & flushOrInit)
 
-  // generate a comb. circuit for turning val-ind pairs' inds into
-  // memory requests for accessing from the proper context mem addr
-  def makeReadReq(r: ValIndPair, id: UInt): GenericMemoryRequest = {
-    val rreq = GenericMemoryRequest(p.mrp)
-    rreq.channelID := id
-    rreq.isWrite := Bool(false)
-    rreq.addr := io.contextBase + r.ind * UInt(p.dataBits/8)
-    rreq.numBytes := UInt(p.dataBits/8)
-    rreq.metaData := UInt(0)
-    return rreq
-  }
-
-  def makeWriteReq(w: ValIndPair, id: UInt): GenericMemoryRequest = {
-    val wreq = GenericMemoryRequest(p.mrp)
-    wreq.channelID := id
-    wreq.isWrite := Bool(true)
-    wreq.addr := io.contextBase + w.ind * UInt(p.dataBits/8)
-    wreq.numBytes := UInt(p.dataBits/8)
-    wreq.metaData := UInt(0)
-    return wreq
-  }
-
   if(inOrder) {
     // context load handling
     // val-ind pairs wait in a queue for the load responses to arrive
@@ -54,13 +32,15 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
     // fork the request stream into the queue and extmem load reqs
     val loadFork = Module(new StreamFork(
       genIn = io.contextLoadReq.bits, genA = io.contextLoadReq.bits,
-      genB = GenericMemoryRequest(p.mrp), forkA = {x: ValIndPair => x},
-      forkB = {x: ValIndPair => makeReadReq(x, UInt(p.chanID))}
+      genB = UInt(width = p.idBits), forkA = {x: ValIndPair => x},
+      forkB = {x: ValIndPair => x.ind}
     )).io
 
     io.contextLoadReq <> loadFork.in
     loadFork.outA <> waitLoad.enq
-    loadFork.outB <> io.mainMem.memRdReq
+    // convert indices to read requests
+    val rr = ReadArray(loadFork.outB, io.contextBase, UInt(p.chanID), p.mrp)
+    rr  <> io.mainMem.memRdReq
 
     // join the waiting val-ind pair with the loaded value on response
     // and drive the load responses with this stream
@@ -78,16 +58,17 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
       forkB = {x: ValIndPair => x.ind}
     )).io
     val saveMemFork = Module(new StreamFork(
-      genIn = io.contextSaveReq.bits, genA = GenericMemoryRequest(p.mrp),
+      genIn = io.contextSaveReq.bits, genA = UInt(width = p.idBits),
       genB = UInt(width = p.dataBits),
-      forkA = {x: ValIndPair => makeWriteReq(x, UInt(p.chanID))},
+      forkA = {x: ValIndPair => x.ind},
       forkB = {x: ValIndPair => x.value}
     )).io
 
     io.contextSaveReq <> saveFork.in
     saveFork.outA <> saveMemFork.in
     saveFork.outB <> waitSave.enq
-    saveMemFork.outA <> io.mainMem.memWrReq
+    val wr = WriteArray(saveMemFork.outA, io.contextBase, UInt(p.chanID), p.mrp)
+    wr <> io.mainMem.memWrReq
     saveMemFork.outB <> io.mainMem.memWrDat
 
     // sync on extmem write responses before issuing save response
