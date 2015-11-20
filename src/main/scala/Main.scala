@@ -10,9 +10,11 @@ import TidbitsDMA._
 import TidbitsPlatformWrapper._
 
 class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val accelName = "UInt32BRAMSpMV"
+  val numPEs = 1
+  val portsPerPE = 1
   val indWidth = 32
   val valWidth = 32
-  val accelName = "UInt32BRAMSpMV"
   val mrp = p.toMemReqParams()
   val makeContextMemory = { () =>
     new BRAMContextMem(new BRAMContextMemParams(
@@ -33,9 +35,11 @@ class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 }
 
 class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val accelName = "UInt64ExtSpMV"
+  val numPEs = 1
+  val portsPerPE = 1
   val indWidth = 32
   val valWidth = 64
-  val accelName = "UInt64ExtSpMV"
   val mrp = p.toMemReqParams()
   val makeContextMemory = { () =>
     new ExtContextMem(new ExtContextMemParams(

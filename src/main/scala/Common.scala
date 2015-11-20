@@ -9,8 +9,10 @@ import TidbitsStreams._
 
 trait SeyrekParams {
   def accelName: String
-  def indWidth: Int
-  def valWidth: Int
+  def numPEs: Int       // number of processing elements (PEs)
+  def portsPerPE: Int   // number of memory ports per PE
+  def indWidth: Int     // bitwidth of CSC indices (colptr, rowind)
+  def valWidth: Int     // bitwidth of matrix/vector values
   val ptrWidth: Int = 64  // large enough for big&small platforms
   def mrp: MemReqParams
   // context memory creation
