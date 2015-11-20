@@ -73,7 +73,7 @@ def makeGoldenResult(A, name):
     x=makeUnitVector(A)
     y=A*x
     f=io.open(outputBase+"/"+name+"/golden.bin", "wb")
-    f.write(y)
+    f.write(y.tostring())
     f.close()
 
 
@@ -121,19 +121,19 @@ def convertMatrix(A, name, startAddr=dramBase):
   # index pointers
   fileName = targetDir + "/" + name + "-indptr.bin"
   indPtrFile = io.open(fileName, "wb")
-  indPtrFile.write(A.indptr)
+  indPtrFile.write(A.indptr.tostring())
   indPtrFile.close()
     
   # indices
   fileName = targetDir + "/" + name + "-inds.bin"
   indsFile = io.open(fileName, "wb")
-  indsFile.write(A.indices)
+  indsFile.write(A.indices.tostring())
   indsFile.close()
   
   # nz values
   fileName = targetDir + "/" + name + "-nzdata.bin"
   indsFile = io.open(fileName, "wb")
-  indsFile.write(A.data)
+  indsFile.write(A.data.tostring())
   indsFile.close()  
   
   print "Rows = " + str(A.shape[0])
