@@ -8,8 +8,8 @@
 #include "wrapperregdriver.h"
 #include "commonsemirings.hpp"
 
-// implements the exec() for software-based SpMV-over-semirings
-// add() and mul() must be implemented in the derived class
+// number of registers per SpMV PE
+#define HWSPMVPE_REGS   16
 
 // TODO better control of acc-host buffer duplication in sw drivers --
 // right now there are two copies of all (host+accel) and coherency mvs.
@@ -24,25 +24,45 @@ protected:
 
   WrapperRegDriver * m_platform;
   const char * m_attachName;
-  AccelReg readReg(unsigned int i) {return m_platform->readReg(i);}
-  void writeReg(unsigned int i, AccelReg v) {m_platform->writeReg(i,v);}
-
-  // register access functions -- copied from the TidbitsPlatformWrapper-generated driver
-  // note that these will change if the SpMV accelerator interface is modified!
-  AccelReg get_signature() {return readReg(0);}
-  void set_start(AccelReg value) {writeReg(1, value);}
-  void set_mode(AccelReg value) {writeReg(2, value);}
-  AccelReg get_finished() {return readReg(3);}
-  void set_csc_colPtr(AccelDblReg value) { writeReg(4, (AccelReg)(value >> 32)); writeReg(5, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_rowInd(AccelDblReg value) { writeReg(6, (AccelReg)(value >> 32)); writeReg(7, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_nzData(AccelDblReg value) { writeReg(8, (AccelReg)(value >> 32)); writeReg(9, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_inpVec(AccelDblReg value) { writeReg(10, (AccelReg)(value >> 32)); writeReg(11, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_outVec(AccelDblReg value) { writeReg(12, (AccelReg)(value >> 32)); writeReg(13, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_rows(AccelReg value) {writeReg(14, value);}
-  void set_csc_cols(AccelReg value) {writeReg(15, value);}
-  void set_csc_nz(AccelReg value) {writeReg(16, value);}
+  unsigned int m_peNum;
 
 
+  // register offsets for the HW SpMV control/status registers
+  // note that these may change if the SpMV accelerator interface is modified in Chisel!
+  typedef enum {
+    offsStart       = 1,
+    offsMode        = 2,
+    offsFinished    = 3,
+    offsColPtrHi    = 4,
+    offsColPtrLo    = 5,
+    offsRowIndHi    = 6,
+    offsRowIndLo    = 7,
+    offsNzDatHi     = 8,
+    offsNzDatLo     = 9,
+    offsInpVecHi    = 10,
+    offsInpVecLo    = 11,
+    offsOutVecHi    = 12,
+    offsOutVecLo    = 13,
+    offsRows        = 14,
+    offsCols        = 15,
+    offsNZ          = 16  
+  } HWSpMVReg;
+  // readReg and writeReg use peNum to add a base offset to the desired register ID
+  AccelReg readReg(HWSpMVReg reg) {return m_platform->readReg(m_peNum * HWSPMVPE_REGS + reg);}
+  void writeReg(HWSpMVReg reg, AccelReg v) {m_platform->writeReg(m_peNum * HWSPMVPE_REGS + reg, v);}
+  // register accessor functions for this PE
+  AccelReg get_signature() {return m_platform->readReg(0);} // signature is always at reg 0 (one for the entire accelerator)
+  void set_start(AccelReg value) {writeReg(offsStart, value);}
+  void set_mode(AccelReg value) {writeReg(offsMode, value);}
+  AccelReg get_finished() {return readReg(offsFinished);}
+  void set_csc_colPtr(AccelDblReg value) { writeReg(offsColPtrHi, (AccelReg)(value >> 32)); writeReg(offsColPtrLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_rowInd(AccelDblReg value) { writeReg(offsRowIndHi, (AccelReg)(value >> 32)); writeReg(offsRowIndLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_nzData(AccelDblReg value) { writeReg(offsNzDatHi, (AccelReg)(value >> 32)); writeReg(offsNzDatLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_inpVec(AccelDblReg value) { writeReg(offsInpVecHi, (AccelReg)(value >> 32)); writeReg(offsInpVecLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_outVec(AccelDblReg value) { writeReg(offsOutVecHi, (AccelReg)(value >> 32)); writeReg(offsOutVecLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_rows(AccelReg value) {writeReg(offsRows, value);}
+  void set_csc_cols(AccelReg value) {writeReg(offsCols, value);}
+  void set_csc_nz(AccelReg value) {writeReg(offsNZ, value);}
 
   // accelerator-side versions of SpMV data
   SpMVInd * m_acc_indPtrs;
@@ -73,7 +93,7 @@ protected:
   }
 
 public:
-  HWSpMV(const char * attachName, WrapperRegDriver * driver) {
+  HWSpMV(const char * attachName, WrapperRegDriver * driver, unsigned int peNum = 0) {
     m_platform = driver;
     m_attachName = attachName;
     m_platform->attach(attachName);
@@ -87,6 +107,7 @@ public:
     m_nzDataSize = 0;
     m_xSize = 0;
     m_ySize = 0;
+    m_peNum = peNum;
   }
   virtual ~HWSpMV() {m_platform->detach();}
 
