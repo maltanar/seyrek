@@ -2,6 +2,7 @@
 #define CSC_H
 
 #include <string>
+#include <vector>
 
 extern void * readMatrixData(std::string name, std::string component);
 
@@ -117,6 +118,54 @@ public:
   unsigned int getRows() const {
     return m_metadata->rows;
   }
+
+  // given a vector of indices for partition boundaries, returns a vector with the
+  // number of elements in each partition. e.g boundaries = {0 10 20}
+  // partition 0 will contain elements with i s.t. 0 <= i < 10
+  // partition 1 will contain elements with i s.t. 10 <= i < 20
+  std::vector<unsigned int> getPartitionElemCnts(std::vector<SpMVInd> boundaries) {
+    unsigned int numPartitions = boundaries.size() - 1;
+    std::vector<unsigned int> res;
+    // initialize all partition counts to zero
+    for(unsigned int i=0; i<numPartitions; i++) res.push_back(0);
+    // iterate over row indices to determine real counts for each partition
+    for(unsigned int i=0; i < m_metadata->nz; i++) {
+      SpMVInd currentInd = m_inds[i];
+      for(unsigned int p=0; p<numPartitions; p++) {
+        if((boundaries[p] <= currentInd) && (currentInd < boundaries[p+1])) {
+            res[p] = res[p] + 1;
+            break;
+        }
+      }
+    }
+    return res;
+  }
+
+  // returns a vector with the number of elements per partition, using equidistant
+  // partition boundaries (e.g. with the matrix split into equal-sized chunks)
+  std::vector<unsigned int> getPartitionElemCnts(unsigned int numPartitions) {
+    std::vector<SpMVInd> boundaries;
+    unsigned int divSize = (m_metadata->rows + numPartitions) / numPartitions;
+    for(unsigned int i = 0; i < numPartitions; i++) {
+      boundaries.push_back(divSize * i);
+    }
+    // push the matrix nz count as the upper bound
+    boundaries.push_back(m_metadata->rows);
+
+    return getPartitionElemCnts(boundaries);
+  }
+
+/*
+  partition the CSC matrix into <numPartitions> chunks (sliced along rows)
+  std::vector<CSC<SpMVInd, SpMVVal> > partition(unsigned int numPartitions) {
+
+  }
+
+  std::vector<CSC<SpMVInd, SpMVVal> > partition(std::vector<SpMVInd> boundaries) {
+
+  }
+*/
+
 
 protected:
   SparseMatrixMetadata * m_metadata;
