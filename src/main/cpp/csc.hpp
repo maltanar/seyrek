@@ -1,6 +1,7 @@
 #ifndef CSC_H_
 #define CSC_H
 
+#include <string.h>
 #include <string>
 #include <vector>
 
@@ -144,6 +145,10 @@ public:
   // returns a vector with the number of elements per partition, using equidistant
   // partition boundaries (e.g. with the matrix split into equal-sized chunks)
   std::vector<unsigned int> getPartitionElemCnts(unsigned int numPartitions) {
+    return getPartitionElemCnts(calcDivBoundaries(numPartitions));
+  }
+
+  std::vector<SpMVInd> calcDivBoundaries(unsigned int numPartitions) {
     std::vector<SpMVInd> boundaries;
     unsigned int divSize = (m_metadata->rows + numPartitions) / numPartitions;
     for(unsigned int i = 0; i < numPartitions; i++) {
@@ -151,20 +156,82 @@ public:
     }
     // push the matrix nz count as the upper bound
     boundaries.push_back(m_metadata->rows);
-
-    return getPartitionElemCnts(boundaries);
+    return boundaries;
   }
 
-/*
-  partition the CSC matrix into <numPartitions> chunks (sliced along rows)
-  std::vector<CSC<SpMVInd, SpMVVal> > partition(unsigned int numPartitions) {
 
+  //partition the CSC matrix into <numPartitions> chunks (sliced along rows)
+  std::vector<CSC<SpMVInd, SpMVVal> * > partition(unsigned int numPartitions) {
+    return partition(calcDivBoundaries(numPartitions));
   }
 
-  std::vector<CSC<SpMVInd, SpMVVal> > partition(std::vector<SpMVInd> boundaries) {
 
+  std::vector<CSC<SpMVInd, SpMVVal> * > partition(std::vector<SpMVInd> boundaries) {
+    std::vector<unsigned int> cnts = getPartitionElemCnts(boundaries);
+    unsigned int numPartitions = boundaries.size() - 1;
+    unsigned int divSize = (m_metadata->rows + numPartitions) / numPartitions;
+    std::vector<CSC<SpMVInd, SpMVVal> * > res;
+    for(unsigned int i = 0; i < numPartitions; i++) {
+        res.push_back(new CSC<SpMVInd, SpMVVal>());
+        res[i]->m_metadata = new SparseMatrixMetadata;
+        res[i]->m_metadata->cols = m_metadata->cols;
+        res[i]->m_metadata->rows = boundaries[i+1] - boundaries[i];
+        res[i]->m_metadata->nz = cnts[i];
+        res[i]->m_metadata->startingRow = boundaries[i];
+        res[i]->m_metadata->startingCol = 0;
+        res[i]->m_metadata->bytesPerInd = m_metadata->bytesPerInd;
+        res[i]->m_metadata->bytesPerVal = m_metadata->bytesPerVal;
+        res[i]->m_indPtrs = new SpMVInd[m_metadata->cols+1];
+        res[i]->m_inds = new SpMVInd[cnts[i]];
+        res[i]->m_nzData = new SpMVVal[cnts[i]];
+        char partName[256];
+        itoa(i, partName);
+        res[i]->m_name = m_name + "-p" + std::string(partName);
+        // each partition's indptr starts with location 0
+        res[i]->m_indPtrs[0] = 0;
+    }
+    // traverse the matrix and distribute elements among partitions
+    for(SpMVInd col = 0; col < m_metadata->cols; col++) {
+      // indPtr[x+1]-indPtr[x] is the number of nz's in column x
+      // start by setting indPtr[x+1] = indPtr[x] for each partition
+      for(unsigned int p=0; p<numPartitions; p++)
+        res[p]->m_indPtrs[col + 1] = res[p]->m_indPtrs[col];
+
+      for(SpMVInd elm = m_indPtrs[col]; elm < m_indPtrs[col+1]; elm++) {
+        SpMVInd currentInd = m_inds[elm];
+        // search for the destination partition for the current ind
+        for(unsigned int p=0; p<numPartitions; p++) {
+          SpMVInd lowerB = boundaries[p], upperB = boundaries[p+1];
+          if((boundaries[p] <= lowerB) && (currentInd < upperB)) {
+              // end of column pointer (also equal to current nz count in partition)
+              SpMVInd partitionElemPos = res[p]->m_indPtrs[col + 1];
+              // copy data into partition
+              // elem index is "rebased" on the partition lower bound
+              res[p]->m_inds[partitionElemPos] = currentInd - lowerB;
+              res[p]->m_nzData[partitionElemPos] = m_nzData[elm];
+              // increment the end of column pointer
+              res[p]->m_indPtrs[col + 1] =  partitionElemPos + 1;
+              // each element goes to one partition only, break
+              break;
+          }
+        }
+      }
+    }
+
+    // sanity check: final end of column - start of column should be equal to nz
+    // for all partitions
+    for(unsigned int p=0; p<numPartitions; p++) {
+      if(res[p]->m_indPtrs[m_metadata->cols] - res[p]->m_indPtrs[0] != res[p]->m_metadata->nz) {
+        std::cout << "mismatch in partition " << p << ": ";
+        std::cout << "nz = " << res[p]->m_metadata->nz << " ";
+        std::cout << "colptr[0] = " << res[p]->m_indPtrs[0] << " ";
+        std::cout << "colptr[end] = " << res[p]->m_indPtrs[m_metadata->cols] << std::endl;
+      }
+    }
+
+
+    return res;
   }
-*/
 
 
 protected:
@@ -174,6 +241,35 @@ protected:
   SpMVInd * m_inds;
   SpMVVal * m_nzData;
   std::string m_name;
+
+  /* itoa:  convert n to characters in s */
+  static void itoa(int n, char s[])
+  {
+      int i, sign;
+
+      if ((sign = n) < 0)  /* record sign */
+          n = -n;          /* make n positive */
+      i = 0;
+      do {       /* generate digits in reverse order */
+          s[i++] = n % 10 + '0';   /* get next digit */
+      } while ((n /= 10) > 0);     /* delete it */
+      if (sign < 0)
+          s[i++] = '-';
+      s[i] = '\0';
+      reverse(s);
+  }
+
+  static void reverse(char s[])
+   {
+       int i, j;
+       char c;
+
+       for (i = 0, j = strlen(s)-1; i<j; i++, j--) {
+           c = s[i];
+           s[i] = s[j];
+           s[j] = c;
+       }
+   }
 
 };
 
