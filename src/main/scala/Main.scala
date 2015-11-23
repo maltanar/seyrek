@@ -113,7 +113,8 @@ object SeyrekMainObj {
     val seyrekDrvRoot = "src/main/cpp/"
     val seyrekFiles = Array("commonsemirings.hpp", "hwcscspmv.hpp",
       "semiring.hpp", "wrapperregdriver.h", "csc.hpp", "main.cpp",
-      "cscspmv.hpp", "platform.h", "swcscspmv.hpp", "seyrek-tester.cpp")
+      "cscspmv.hpp", "platform.h", "swcscspmv.hpp", "seyrek-tester.cpp",
+      "seyrekconsts.hpp", "parallelspmv.hpp")
     for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, "emulator/" + f) }
   }
 

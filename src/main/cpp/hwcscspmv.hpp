@@ -7,6 +7,7 @@
 #include "cscspmv.hpp"
 #include "wrapperregdriver.h"
 #include "commonsemirings.hpp"
+#include "seyrekconsts.hpp"
 
 // number of registers per SpMV PE
 #define HWSPMVPE_REGS   16
@@ -17,86 +18,16 @@
 
 template <class SpMVInd, class SpMVVal>
 class HWSpMV : public virtual CSCSpMV<SpMVInd, SpMVVal>, public AddMulSemiring<SpMVInd, SpMVVal> {
-protected:
-  using CSCSpMV<SpMVInd, SpMVVal>::m_A;
-  using CSCSpMV<SpMVInd, SpMVVal>::m_y;
-  using CSCSpMV<SpMVInd, SpMVVal>::m_x;
-
-  WrapperRegDriver * m_platform;
-  const char * m_attachName;
-  unsigned int m_peNum;
-
-
-  // register offsets for the HW SpMV control/status registers
-  // note that these may change if the SpMV accelerator interface is modified in Chisel!
-  typedef enum {
-    offsStart       = 1,
-    offsMode        = 2,
-    offsFinished    = 3,
-    offsColPtrHi    = 4,
-    offsColPtrLo    = 5,
-    offsRowIndHi    = 6,
-    offsRowIndLo    = 7,
-    offsNzDatHi     = 8,
-    offsNzDatLo     = 9,
-    offsInpVecHi    = 10,
-    offsInpVecLo    = 11,
-    offsOutVecHi    = 12,
-    offsOutVecLo    = 13,
-    offsRows        = 14,
-    offsCols        = 15,
-    offsNZ          = 16  
-  } HWSpMVReg;
-  // readReg and writeReg use peNum to add a base offset to the desired register ID
-  AccelReg readReg(HWSpMVReg reg) {return m_platform->readReg(m_peNum * HWSPMVPE_REGS + reg);}
-  void writeReg(HWSpMVReg reg, AccelReg v) {m_platform->writeReg(m_peNum * HWSPMVPE_REGS + reg, v);}
-  // register accessor functions for this PE
-  AccelReg get_signature() {return m_platform->readReg(0);} // signature is always at reg 0 (one for the entire accelerator)
-  void set_start(AccelReg value) {writeReg(offsStart, value);}
-  void set_mode(AccelReg value) {writeReg(offsMode, value);}
-  AccelReg get_finished() {return readReg(offsFinished);}
-  void set_csc_colPtr(AccelDblReg value) { writeReg(offsColPtrHi, (AccelReg)(value >> 32)); writeReg(offsColPtrLo, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_rowInd(AccelDblReg value) { writeReg(offsRowIndHi, (AccelReg)(value >> 32)); writeReg(offsRowIndLo, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_nzData(AccelDblReg value) { writeReg(offsNzDatHi, (AccelReg)(value >> 32)); writeReg(offsNzDatLo, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_inpVec(AccelDblReg value) { writeReg(offsInpVecHi, (AccelReg)(value >> 32)); writeReg(offsInpVecLo, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_outVec(AccelDblReg value) { writeReg(offsOutVecHi, (AccelReg)(value >> 32)); writeReg(offsOutVecLo, (AccelReg)(value & 0xffffffff)); }
-  void set_csc_rows(AccelReg value) {writeReg(offsRows, value);}
-  void set_csc_cols(AccelReg value) {writeReg(offsCols, value);}
-  void set_csc_nz(AccelReg value) {writeReg(offsNZ, value);}
-
-  // accelerator-side versions of SpMV data
-  SpMVInd * m_acc_indPtrs;
-  SpMVInd * m_acc_inds;
-  SpMVVal * m_acc_nzData;
-  SpMVVal * m_acc_x;
-  SpMVVal * m_acc_y;
-  unsigned int m_indPtrSize;
-  unsigned int m_indSize;
-  unsigned int m_nzDataSize;
-  unsigned int m_xSize;
-  unsigned int m_ySize;
-
-  // mode settings for Seyrek
-  typedef enum {
-    START_REGULAR = 0,
-    START_INIT = 1,
-    START_FLUSH = 2
-  } SeyrekModes;
-
-  void execAccelMode(SeyrekModes mode) {
-    // TODO ensure finished before starting new commands!
-    set_mode(mode);
-    set_start(1);
-    // TODO add timeout option here?
-    while(get_finished() != 1);
-    set_start(0);
-  }
-
 public:
   HWSpMV(const char * attachName, WrapperRegDriver * driver, unsigned int peNum = 0) {
-    m_platform = driver;
+    HWSpMV(driver, peNum);
     m_attachName = attachName;
     m_platform->attach(attachName);
+  }
+
+  HWSpMV(WrapperRegDriver * driver, unsigned int peNum) {
+    m_attachName = 0;
+    m_platform = driver;
     m_acc_indPtrs = 0;
     m_acc_inds = 0;
     m_acc_nzData = 0;
@@ -109,7 +40,8 @@ public:
     m_ySize = 0;
     m_peNum = peNum;
   }
-  virtual ~HWSpMV() {m_platform->detach();}
+
+  virtual ~HWSpMV() {if(m_attachName !=0) m_platform->detach();}
 
   virtual void setA(CSC<SpMVInd, SpMVVal> * A) {
     // free the old accel buffers first, if alloc'd
@@ -172,8 +104,7 @@ public:
     execAccelMode(START_INIT);
     execAccelMode(START_REGULAR);
     execAccelMode(START_FLUSH);
-    // copy back y data to the host side
-    m_platform->copyBufferAccelToHost((void *)m_acc_y, (void *)m_y, m_ySize);
+    copyOutputToHost();
     return true;
   }
 
@@ -184,6 +115,92 @@ public:
     std::vector<std::string> keys;
     keys.push_back("matrix");
   }
+
+  // HWSpMV-specific functions
+  void copyOutputToHost() {
+    // copy back y data to the host side
+    m_platform->copyBufferAccelToHost((void *)m_acc_y, (void *)m_y, m_ySize);
+  }
+
+  virtual bool isFinished() {
+    return get_finished() == 1;
+  }
+
+  virtual void setModeAsync(SeyrekModes mode, bool start) {
+    // TODO check current status first!
+    set_mode(mode);
+    if(start) set_start(1);
+    else set_start(0);
+  }
+
+protected:
+  using CSCSpMV<SpMVInd, SpMVVal>::m_A;
+  using CSCSpMV<SpMVInd, SpMVVal>::m_y;
+  using CSCSpMV<SpMVInd, SpMVVal>::m_x;
+
+  WrapperRegDriver * m_platform;
+  const char * m_attachName;
+  unsigned int m_peNum;
+
+
+  // register offsets for the HW SpMV control/status registers
+  // note that these may change if the SpMV accelerator interface is modified in Chisel!
+  typedef enum {
+    offsStart       = 1,
+    offsMode        = 2,
+    offsFinished    = 3,
+    offsColPtrHi    = 4,
+    offsColPtrLo    = 5,
+    offsRowIndHi    = 6,
+    offsRowIndLo    = 7,
+    offsNzDatHi     = 8,
+    offsNzDatLo     = 9,
+    offsInpVecHi    = 10,
+    offsInpVecLo    = 11,
+    offsOutVecHi    = 12,
+    offsOutVecLo    = 13,
+    offsRows        = 14,
+    offsCols        = 15,
+    offsNZ          = 16
+  } HWSpMVReg;
+  // readReg and writeReg use peNum to add a base offset to the desired register ID
+  AccelReg readReg(HWSpMVReg reg) {return m_platform->readReg(m_peNum * HWSPMVPE_REGS + reg);}
+  void writeReg(HWSpMVReg reg, AccelReg v) {m_platform->writeReg(m_peNum * HWSPMVPE_REGS + reg, v);}
+  // register accessor functions for this PE
+  AccelReg get_signature() {return m_platform->readReg(0);} // signature is always at reg 0 (one for the entire accelerator)
+  void set_start(AccelReg value) {writeReg(offsStart, value);}
+  void set_mode(AccelReg value) {writeReg(offsMode, value);}
+  AccelReg get_finished() {return readReg(offsFinished);}
+  void set_csc_colPtr(AccelDblReg value) { writeReg(offsColPtrHi, (AccelReg)(value >> 32)); writeReg(offsColPtrLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_rowInd(AccelDblReg value) { writeReg(offsRowIndHi, (AccelReg)(value >> 32)); writeReg(offsRowIndLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_nzData(AccelDblReg value) { writeReg(offsNzDatHi, (AccelReg)(value >> 32)); writeReg(offsNzDatLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_inpVec(AccelDblReg value) { writeReg(offsInpVecHi, (AccelReg)(value >> 32)); writeReg(offsInpVecLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_outVec(AccelDblReg value) { writeReg(offsOutVecHi, (AccelReg)(value >> 32)); writeReg(offsOutVecLo, (AccelReg)(value & 0xffffffff)); }
+  void set_csc_rows(AccelReg value) {writeReg(offsRows, value);}
+  void set_csc_cols(AccelReg value) {writeReg(offsCols, value);}
+  void set_csc_nz(AccelReg value) {writeReg(offsNZ, value);}
+
+  // accelerator-side versions of SpMV data
+  SpMVInd * m_acc_indPtrs;
+  SpMVInd * m_acc_inds;
+  SpMVVal * m_acc_nzData;
+  SpMVVal * m_acc_x;
+  SpMVVal * m_acc_y;
+  unsigned int m_indPtrSize;
+  unsigned int m_indSize;
+  unsigned int m_nzDataSize;
+  unsigned int m_xSize;
+  unsigned int m_ySize;
+
+  void execAccelMode(SeyrekModes mode) {
+    // TODO ensure finished before starting new commands!
+    set_mode(mode);
+    set_start(1);
+    // TODO add timeout option here?
+    while(get_finished() != 1);
+    set_start(0);
+  }
+
 };
 
 #endif // HWCSCSPMV_HPP

@@ -4,6 +4,7 @@
 #include "commonsemirings.hpp"
 #include "platform.h"
 #include <string.h>
+#include "parallelspmv.hpp"
 
 using namespace std;
 
@@ -23,9 +24,13 @@ public:
 
 int main(int argc, char *argv[])
 {
+  typedef CSC<SpMVInd, SpMVVal> SparseMatrix;
+  typedef HWSpMV<SpMVInd, SpMVVal> HardwareSpMV;
+  typedef ParallelHWSpMV<SpMVInd, SpMVVal> ParSpMV;
+
   try {
 
-    CSC<SpMVInd, SpMVVal> * A = CSC<SpMVInd, SpMVVal>::load("circuit204-int");
+    SparseMatrix * A = SparseMatrix::load("circuit204-int");
     SpMVVal * x = new SpMVVal[A->getCols()];
     SpMVVal * y = new SpMVVal[A->getRows()];
     for(int i = 0; i < A->getRows(); i++) {
@@ -33,14 +38,16 @@ int main(int argc, char *argv[])
         y[i] = 0;
     }
 
+
     WrapperRegDriver * platform = initPlatform();
-    HWSpMV<SpMVInd, SpMVVal> * hw = new HWSpMV<SpMVInd, SpMVVal>("UInt32BRAMSpMV", platform);
+    ParSpMV * par = new ParSpMV(1, platform, "UInt32BRAMSpMV");
 
-    hw->setA(A);
-    hw->setx(x);
-    hw->sety(y);
+    par->setA(A);
+    par->setx(x);
+    par->sety(y);
 
-    hw->exec();
+
+    par->exec();
 
     cout << "Completed, checking result..." << endl;
 
@@ -61,7 +68,7 @@ int main(int argc, char *argv[])
         if(goldeny[i] != y[i]) cout << i << " golden: " << goldeny[i] << " res: " << y[i] << endl;
       }
 
-    delete hw;
+    delete par;
     delete [] x;
     delete [] y;
     delete [] goldeny;

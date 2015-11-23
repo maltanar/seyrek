@@ -120,6 +120,10 @@ public:
     return m_metadata->rows;
   }
 
+  unsigned int getStartingRow() const {
+    return m_metadata->startingRow;
+  }
+
   // given a vector of indices for partition boundaries, returns a vector with the
   // number of elements in each partition. e.g boundaries = {0 10 20}
   // partition 0 will contain elements with i s.t. 0 <= i < 10
