@@ -19,14 +19,8 @@
 template <class SpMVInd, class SpMVVal>
 class HWSpMV : public virtual CSCSpMV<SpMVInd, SpMVVal>, public AddMulSemiring<SpMVInd, SpMVVal> {
 public:
-  HWSpMV(const char * attachName, WrapperRegDriver * driver, unsigned int peNum = 0) {
-    HWSpMV(driver, peNum);
+  HWSpMV(WrapperRegDriver * driver, unsigned int peNum = 0, const char * attachName = 0) {
     m_attachName = attachName;
-    m_platform->attach(attachName);
-  }
-
-  HWSpMV(WrapperRegDriver * driver, unsigned int peNum) {
-    m_attachName = 0;
     m_platform = driver;
     m_acc_indPtrs = 0;
     m_acc_inds = 0;
@@ -39,7 +33,9 @@ public:
     m_xSize = 0;
     m_ySize = 0;
     m_peNum = peNum;
-  }
+    if(attachName != 0)
+      m_platform->attach(attachName);
+  } 
 
   virtual ~HWSpMV() {if(m_attachName !=0) m_platform->detach();}
 
@@ -114,6 +110,7 @@ public:
   virtual std::vector<std::string> statKeys() {
     std::vector<std::string> keys;
     keys.push_back("matrix");
+    return keys;
   }
 
   // HWSpMV-specific functions

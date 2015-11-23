@@ -173,7 +173,6 @@ public:
   std::vector<CSC<SpMVInd, SpMVVal> * > partition(std::vector<SpMVInd> boundaries) {
     std::vector<unsigned int> cnts = getPartitionElemCnts(boundaries);
     unsigned int numPartitions = boundaries.size() - 1;
-    unsigned int divSize = (m_metadata->rows + numPartitions) / numPartitions;
     std::vector<CSC<SpMVInd, SpMVVal> * > res;
     for(unsigned int i = 0; i < numPartitions; i++) {
         res.push_back(new CSC<SpMVInd, SpMVVal>());

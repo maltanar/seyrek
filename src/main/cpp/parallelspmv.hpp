@@ -76,6 +76,7 @@ public:
     for(unsigned int pe = 0; pe < m_numPEs; pe++) {
       m_pe[pe]->copyOutputToHost();
     }
+    return true;
   }
 
   // TODO expose proper stats
@@ -84,6 +85,7 @@ public:
   virtual std::vector<std::string> statKeys() {
     std::vector<std::string> keys;
     keys.push_back("matrix");
+    return keys;
   }
 
 protected:
