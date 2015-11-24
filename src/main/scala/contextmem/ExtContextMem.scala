@@ -13,9 +13,94 @@ class ExtContextMemParams(
   mrp: MemReqParams
 ) extends ContextMemParams(idBits, dataBits, chanID, mrp)
 
+// a queue for storing the available request IDs, plus a little initializer
+// to initially fill it with the range of available IDs
+// essentially the "pool of available request IDs"
+class ExtReqIDQueue(idWidth: Int, entries: Int, startID: Int) extends Module {
+  val idElem = UInt(width = idWidth)
+  val io = new Bundle {
+    val idIn = Decoupled(UInt(idElem)).flip
+    val idOut = Decoupled(UInt(idElem))
+    val initStart = Bool(INPUT)
+    val initFinished = Bool(OUTPUT)
+  }
+  val idQ = Module(new Queue(UInt(idElem), entries)).io
+  idQ.deq <> io.idOut
+
+  val initGen = Module(new SequenceGenerator(idWidth)).io
+  initGen.start := io.initStart
+  io.initFinished := initGen.finished
+  initGen.count := UInt(entries)
+  initGen.step := UInt(1)
+  initGen.init := UInt(startID)
+
+  val idSources = Seq(io.idIn, initGen.seq)
+  DecoupledInputMux(io.initStart, idSources) <> idQ.enq
+}
+
 // TODO add support for multiple outstanding requests
-// TODO inst. reorder buffer depending on mem sys OoO-ness
 // TODO add support for non-word accesses
+
+class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
+  val inOrder: Boolean = false
+
+  io.finished := Bool(false) // TODO
+
+  // important to distinguish between two types of ID data here:
+  // - the request IDs that get sent to memory system (width=p.mrp.idWidth)
+  // - the context IDs (row indices) in Seyrek (width=p.idBits)
+
+  // pool of available read request IDs
+  val readReqPool = Module(
+    new ExtReqIDQueue(p.mrp.idWidth, p.readTxns, p.chanID)).io
+  readReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
+
+  // data associated with read req waits here for the response to come
+  val readWait = Mem(io.contextLoadReq.bits, p.readTxns)
+
+  val readyReqs = StreamJoin(
+    inA = io.contextLoadReq, inB = readReqPool.idOut,
+    genO = UInt(width = p.idBits), join =
+    {(rq: ValIndPair, id: UInt) => rq.ind}
+  )
+
+  // when a a read transaction happens, preserve the read request data in
+  // the readWait memory. this mem is indexed by the request ID, so the
+  // memory line corresponding to an accepted txn's ID is always free
+  when( readyReqs.ready & readyReqs.valid) {
+    // note how the id is "rebased" (p.chanID may start from a nonzero val.)
+    readWait(readReqPool.idOut.bits - UInt(p.chanID)) := io.contextLoadReq.bits
+  }
+
+  // convert indices to read requests
+  // TODO ReadArray should also take in id stream, coming from the id pool
+  // as a direct signal for now. safe because StreamJoin synchronizes
+  // both the request and id streams.
+  val rr = ReadArray(readyReqs, io.contextBase, readReqPool.idOut.bits, p.mrp)
+  rr  <> io.mainMem.memRdReq
+
+
+  val readRspFork = Module(new StreamFork(
+    genIn = io.mainMem.memRdRsp.bits, genA = readReqPool.idIn.bits,
+    genB = io.contextLoadRsp.bits,
+    forkA = {x: GenericMemoryResponse => x.channelID},
+    forkB = {x: GenericMemoryResponse => x.readData}
+  )).io
+
+  io.mainMem.memRdRsp <> readRspFork.in
+  readRspFork.outA <> readReqPool.idIn.bits // return ID back to pool
+
+  readRspFork.outB.ready := io.contextLoadRsp.ready
+  io.contextLoadRsp.valid := readRspFork.outB.valid
+  io.contextLoadRsp.bits.matrixVal := readRspFork.outB.bits
+  // load the corresponding read req context from the readWait mem
+  // TODO don't make the context read combinational, add an extra stage here
+  val restoredReadCtx = readWait(readRspFork.outA.bits - UInt(p.chanID))
+  io.contextLoadRsp.bits.vectorVal := restoredReadCtx.value
+  io.contextLoadRsp.bits.rowInd := restoredReadCtx.ind
+
+  // TODO writes. structure here will be much the same as reads.
+}
 
 class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   val inOrder: Boolean = (p.readTxns == 1 && p.writeTxns == 1)
