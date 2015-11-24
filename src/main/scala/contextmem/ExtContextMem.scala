@@ -43,8 +43,6 @@ class ExtReqIDQueue(idWidth: Int, entries: Int, startID: Int) extends Module {
 class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   val inOrder: Boolean = false
 
-  io.finished := Bool(false) // TODO
-
   // important to distinguish between two types of ID data here:
   // - the request IDs that get sent to memory system (width=p.mrp.idWidth)
   // - the context IDs (row indices) in Seyrek (width=p.idBits)
@@ -107,9 +105,9 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   // pool of available write request IDs
   val writeReqPool = Module(
     new ExtReqIDQueue(p.mrp.idWidth, p.writeTxns, p.chanID)).io
-  readReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
+  writeReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
 
-  // data associated with read req waits here for the response to come
+  // data associated with write req waits here for the response to come
   val writeWait = Mem(io.contextSaveReq.bits.ind, p.writeTxns)
   // sync request ID stream and write request stream
   val readyWriteReqs = StreamJoin(
@@ -141,8 +139,6 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   saveMemFork.outB <> io.mainMem.memWrDat
 
   // handling write responses:
-
-
   // fork write responses into channel ID + context saved ID
   val writeRspFork = Module(new StreamFork(
     genIn = io.mainMem.memWrRsp.bits, genA = writeReqPool.idIn.bits,
@@ -159,6 +155,11 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   val restoredWrCtx = writeWait(io.mainMem.memWrRsp.bits.channelID - UInt(p.chanID))
   io.contextSaveRsp.bits := restoredWrCtx // saved ID from restoredWrCtx
 
+  // finished signal for the ExtContextMem
+  io.finished := Bool(true)
+  when (io.mode === SeyrekModes.START_INIT) {
+    io.finished := readReqPool.initFinished & writeReqPool.initFinished
+  }
 }
 
 class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
