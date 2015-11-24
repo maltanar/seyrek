@@ -19,12 +19,12 @@ class ExtContextMemParams(
 class ExtReqIDQueue(idWidth: Int, entries: Int, startID: Int) extends Module {
   val idElem = UInt(width = idWidth)
   val io = new Bundle {
-    val idIn = Decoupled(UInt(idElem)).flip
-    val idOut = Decoupled(UInt(idElem))
+    val idIn = Decoupled(idElem).flip
+    val idOut = Decoupled(idElem)
     val initStart = Bool(INPUT)
     val initFinished = Bool(OUTPUT)
   }
-  val idQ = Module(new Queue(UInt(idElem), entries)).io
+  val idQ = Module(new Queue(idElem, entries)).io
   idQ.deq <> io.idOut
 
   val initGen = Module(new SequenceGenerator(idWidth)).io
@@ -38,7 +38,6 @@ class ExtReqIDQueue(idWidth: Int, entries: Int, startID: Int) extends Module {
   DecoupledInputMux(io.initStart, idSources) <> idQ.enq
 }
 
-// TODO add support for multiple outstanding requests
 // TODO add support for non-word accesses
 
 class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
@@ -64,7 +63,7 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
     {(rq: ValIndPair, id: UInt) => rq.ind}
   )
 
-  // when a a read transaction happens, preserve the read request data in
+  // when a read transaction happens, preserve the read request data in
   // the readWait memory. this mem is indexed by the request ID, so the
   // memory line corresponding to an accepted txn's ID is always free
   when( readyReqs.ready & readyReqs.valid) {
@@ -79,16 +78,18 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   val rr = ReadArray(readyReqs, io.contextBase, readReqPool.idOut.bits, p.mrp)
   rr  <> io.mainMem.memRdReq
 
-
+  // fork read responses into read data and channel ID
+  // the read data is returned from the ContextMem, while the channel ID
+  // will be recycled into the free request ID pool
   val readRspFork = Module(new StreamFork(
     genIn = io.mainMem.memRdRsp.bits, genA = readReqPool.idIn.bits,
-    genB = io.contextLoadRsp.bits,
+    genB = io.mainMem.memRdRsp.bits.readData,
     forkA = {x: GenericMemoryResponse => x.channelID},
     forkB = {x: GenericMemoryResponse => x.readData}
   )).io
 
   io.mainMem.memRdRsp <> readRspFork.in
-  readRspFork.outA <> readReqPool.idIn.bits // return ID back to pool
+  readRspFork.outA <> readReqPool.idIn // recycle ID back to pool
 
   readRspFork.outB.ready := io.contextLoadRsp.ready
   io.contextLoadRsp.valid := readRspFork.outB.valid
@@ -99,7 +100,65 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   io.contextLoadRsp.bits.vectorVal := restoredReadCtx.value
   io.contextLoadRsp.bits.rowInd := restoredReadCtx.ind
 
-  // TODO writes. structure here will be much the same as reads.
+  // =======================================================================
+  // context writes, pretty similar to how OoO reads are handled
+  // =======================================================================
+
+  // pool of available write request IDs
+  val writeReqPool = Module(
+    new ExtReqIDQueue(p.mrp.idWidth, p.writeTxns, p.chanID)).io
+  readReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
+
+  // data associated with read req waits here for the response to come
+  val writeWait = Mem(io.contextSaveReq.bits.ind, p.writeTxns)
+  // sync request ID stream and write request stream
+  val readyWriteReqs = StreamJoin(
+    inA = io.contextSaveReq, inB = writeReqPool.idOut,
+    genO = io.contextSaveReq.bits, join =
+    {(rq: ValIndPair, id: UInt) => rq}
+  )
+  // when a write transaction happens, preserve the write request data (index)
+  // in the writeWait memory
+  when( readyWriteReqs.ready & readyWriteReqs.valid) {
+    // note how the id is "rebased" (p.chanID may start from a nonzero val.)
+    writeWait(writeReqPool.idOut.bits - UInt(p.chanID)) := io.contextSaveReq.bits.ind
+  }
+
+  // fork write data indices and writes as two streams
+  val saveMemFork = Module(new StreamFork(
+    genIn = readyWriteReqs.bits, genA = UInt(width = p.idBits),
+    genB = UInt(width = p.dataBits),
+    forkA = {x: ValIndPair => x.ind},
+    forkB = {x: ValIndPair => x.value}
+  )).io
+  readyWriteReqs <> saveMemFork.in
+  // convert indices to write stream
+  // TODO WriteArray should also take in id stream, coming from the id pool
+  // as a direct signal for now. safe because StreamJoin synchronizes
+  // both the request and id streams.
+  val wr = WriteArray(saveMemFork.outA, io.contextBase, UInt(p.chanID), p.mrp)
+  wr <> io.mainMem.memWrReq
+  saveMemFork.outB <> io.mainMem.memWrDat
+
+  // handling write responses:
+
+
+  // fork write responses into channel ID + context saved ID
+  val writeRspFork = Module(new StreamFork(
+    genIn = io.mainMem.memWrRsp.bits, genA = writeReqPool.idIn.bits,
+    genB = io.contextSaveRsp.bits,
+    forkA = {x: GenericMemoryResponse => x.channelID},
+    forkB = {x: GenericMemoryResponse => UInt(0, width = p.idBits)} // bogus 0
+  )).io
+  io.mainMem.memWrRsp <> writeRspFork.in
+  writeRspFork.outA <> writeReqPool.idIn // recycle ID back into pool
+  writeRspFork.outB <> io.contextSaveRsp // we'll override the .bits here
+
+  // load the corresponding write req context from the writeWait mem
+  // TODO don't make the context read combinational, add an extra stage here
+  val restoredWrCtx = writeWait(io.mainMem.memWrRsp.bits.channelID - UInt(p.chanID))
+  io.contextSaveRsp.bits := restoredWrCtx // saved ID from restoredWrCtx
+
 }
 
 class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
