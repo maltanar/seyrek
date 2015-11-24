@@ -78,20 +78,26 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   readRowInd.io.req <> readSeqIntl.reqIn(readRowInd.p.chanID)
   readNZData.io.req <> readSeqIntl.reqIn(readNZData.p.chanID)
   readInpVec.io.req <> readSeqIntl.reqIn(readInpVec.p.chanID)
-  // TODO get ID range from contextmem + customize routing function
   contextmem.io.mainMem.memRdReq <> readSeqIntl.reqIn(contextmem.p.chanID)
 
   readSeqIntl.reqOut <> io.reqSeq.memRdReq
 
   // deinterleaver to seperate incoming read responses
-  val readSeqDeintl = Module(new QueuedDeinterleaver(5, p.mrp, 4)).io
+  val ctxMemReqID = UInt(contextmem.p.chanID)
+  // assume that the ContextMem has access to all the higher req ID values:
+  // - any response with ID less than ctxMemReqID is routed to chan=id
+  // - all other responses are routed to the ContextMem
+  val respDecode = {x: GenericMemoryResponse =>
+    Mux(x.channelID < ctxMemReqID, x.channelID, ctxMemReqID)
+  }
+  val readSeqDeintl = Module(new QueuedDeinterleaver(5, p.mrp, 4, respDecode)).io
   io.reqSeq.memRdRsp <> readSeqDeintl.rspIn
 
+  // TODO get ID ranges from req generators + automatically set up these conns
   readSeqDeintl.rspOut(readColPtr.p.chanID) <> readColPtr.io.rsp
   readSeqDeintl.rspOut(readRowInd.p.chanID) <> readRowInd.io.rsp
   readSeqDeintl.rspOut(readNZData.p.chanID) <> readNZData.io.rsp
   readSeqDeintl.rspOut(readInpVec.p.chanID) <> readInpVec.io.rsp
-  // TODO get ID range from contextmem + customize routing function
   readSeqDeintl.rspOut(contextmem.p.chanID) <> contextmem.io.mainMem.memRdRsp
 
   // write channel used only by the ContextMem
