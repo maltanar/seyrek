@@ -2,6 +2,7 @@ package Seyrek
 
 import Chisel._
 import TidbitsPlatformWrapper._
+import TidbitsStreams._
 
 class SpMVProcElemIF(pSeyrek: SeyrekParams) extends Bundle {
   val start = Bool(INPUT)
@@ -44,6 +45,16 @@ extends GenericAccelerator(p) {
     frontend.io.contextSaveReq <> backend.io.contextSaveReq
     backend.io.contextLoadRsp <> frontend.io.contextLoadRsp
     backend.io.contextSaveRsp <> frontend.io.contextSaveRsp
+
+    // StreamMonitors for general progress monitoring -- uncomment to enable
+    // and read output as printfs on the Chisel C++ emulator 
+    /*
+    StreamMonitor(frontend.io.workUnits, Bool(true), "workUnits")
+    StreamMonitor(frontend.io.contextLoadReq, Bool(true), "contextLoadReq")
+    StreamMonitor(frontend.io.contextSaveReq, Bool(true), "contextSaveReq")
+    StreamMonitor(frontend.io.contextLoadRsp, Bool(true), "contextLoadRsp")
+    StreamMonitor(frontend.io.contextSaveRsp, Bool(true), "contextSaveRsp")
+    */
   }
 
   // TODO expose more detailed status and statistics
