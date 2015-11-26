@@ -2,6 +2,7 @@ package Seyrek
 
 import Chisel._
 import TidbitsStreams._
+import TidbitsOCM._
 
 class SpMVFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csc = new CSCSpMV(p).asInput
@@ -24,23 +25,23 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   // TODO do we really need queues at every step, and how big?
 
   // (v, v, i) -> [queue] -> [mul] -> (n = v*v, i)
-  Queue(io.workUnits, 2) <> mul.in
+  FPGAQueue(io.workUnits, 2) <> mul.in
 
   // (n, i) -> [queue] -> [scheduler]
-  Queue(mul.out, 2) <> sched.io.instr
+  FPGAQueue(mul.out, 2) <> sched.io.instr
 
   // [scheduler] -> (n, i) -> [load context]
-  Queue(sched.io.issue, 2) <> io.contextLoadReq
+  FPGAQueue(sched.io.issue, 2) <> io.contextLoadReq
 
   // [load context] -> (o, n, i) -> [add]
-  Queue(io.contextLoadRsp, 2) <> add.in
+  FPGAQueue(io.contextLoadRsp, 2) <> add.in
 
   // [add] -> (s = o+n, i) -> [queue] -> [save context]
-  Queue(add.out, 2) <> io.contextSaveReq
+  FPGAQueue(add.out, 2) <> io.contextSaveReq
 
   // signal completion to remove from scheduler
   // [save context] -> i -> [scheduler]
-  Queue(io.contextSaveRsp, 2) <> sched.io.compl
+  FPGAQueue(io.contextSaveRsp, 2) <> sched.io.compl
 
   // completion logic
   io.finished := Bool(false)

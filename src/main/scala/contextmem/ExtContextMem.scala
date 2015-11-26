@@ -3,6 +3,7 @@ package Seyrek
 import Chisel._
 import TidbitsDMA._
 import TidbitsStreams._
+import TidbitsOCM._
 
 class ExtContextMemParams(
   val readTxns: Int,
@@ -24,7 +25,7 @@ class ExtReqIDQueue(idWidth: Int, entries: Int, startID: Int) extends Module {
     val initStart = Bool(INPUT)
     val initFinished = Bool(OUTPUT)
   }
-  val idQ = Module(new Queue(idElem, entries)).io
+  val idQ = Module(new FPGAQueue(idElem, entries)).io
   idQ.deq <> io.idOut
 
   val initGen = Module(new SequenceGenerator(idWidth)).io
@@ -173,7 +174,7 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   if(inOrder) {
     // context load handling
     // val-ind pairs wait in a queue for the load responses to arrive
-    val waitLoad = Module(new Queue(io.contextLoadReq.bits, p.readTxns+1)).io
+    val waitLoad = Module(new FPGAQueue(io.contextLoadReq.bits, p.readTxns+1)).io
     // fork the request stream into the queue and extmem load reqs
     val loadFork = Module(new StreamFork(
       genIn = io.contextLoadReq.bits, genA = io.contextLoadReq.bits,
@@ -196,7 +197,7 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
     ) <> io.contextLoadRsp
 
     // context save handling
-    val waitSave = Module(new Queue(io.contextSaveRsp.bits, p.writeTxns+1)).io
+    val waitSave = Module(new FPGAQueue(io.contextSaveRsp.bits, p.writeTxns+1)).io
     val saveFork = Module(new StreamFork(
       genIn = io.contextSaveReq.bits, genA = io.contextSaveReq.bits,
       genB = io.contextSaveRsp.bits, forkA = {x: ValIndPair => x},
