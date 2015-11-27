@@ -2,6 +2,7 @@ package Seyrek
 
 import Chisel._
 import TidbitsDMA._
+import TidbitsOCM._
 import TidbitsStreams._
 
 // TODO sanity-check whether scheduler and contextmem orderings match
@@ -66,7 +67,7 @@ object ValIndPair {
 }
 
 // "contextful" version of semiring op (also carries the index through the
-// pipeline through a FIFO queue of equal latency)
+// pipeline through a FIFO queue, capacity = latency)
 
 class ContextfulSemiringOpIO(p: SeyrekParams) extends Bundle {
   val in = Decoupled(p.wu).flip
@@ -94,7 +95,10 @@ extends Module {
   if(opInst.latency == 0) {
     forker.outB <> joiner.inB
   } else {
-    val indQ = Module(new Queue(p.i, opInst.latency, pipe=true)).io
+    // queue should have at least two elements to guarantee full throughout
+    // could use smaller sizes with pipe/flow, but this gives better timing
+    val qCap = if(opInst.latency < 2) 2 else opInst.latency
+    val indQ = Module(new FPGAQueue(p.i, qCap)).io
     forker.outB <> indQ.enq
     indQ.deq <> joiner.inB
   }
