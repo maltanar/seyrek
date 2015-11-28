@@ -14,30 +14,7 @@ class ExtContextMemParams(
   mrp: MemReqParams
 ) extends ContextMemParams(idBits, dataBits, chanID, mrp)
 
-// a queue for storing the available request IDs, plus a little initializer
-// to initially fill it with the range of available IDs
-// essentially the "pool of available request IDs"
-class ExtReqIDQueue(idWidth: Int, entries: Int, startID: Int) extends Module {
-  val idElem = UInt(width = idWidth)
-  val io = new Bundle {
-    val idIn = Decoupled(idElem).flip
-    val idOut = Decoupled(idElem)
-    val initStart = Bool(INPUT)
-    val initFinished = Bool(OUTPUT)
-  }
-  val idQ = Module(new FPGAQueue(idElem, entries)).io
-  idQ.deq <> io.idOut
 
-  val initGen = Module(new SequenceGenerator(idWidth)).io
-  initGen.start := io.initStart
-  io.initFinished := initGen.finished
-  initGen.count := UInt(entries)
-  initGen.step := UInt(1)
-  initGen.init := UInt(startID)
-
-  val idSources = Seq(io.idIn, initGen.seq)
-  DecoupledInputMux(io.initStart, idSources) <> idQ.enq
-}
 
 // TODO add support for non-word accesses
 
@@ -50,7 +27,7 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
 
   // pool of available read request IDs
   val readReqPool = Module(
-    new ExtReqIDQueue(p.mrp.idWidth, p.readTxns, p.chanID)).io
+    new ReqIDQueue(p.mrp.idWidth, p.readTxns, p.chanID)).io
   readReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
 
   // data associated with read req waits here for the response to come
@@ -105,7 +82,7 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
 
   // pool of available write request IDs
   val writeReqPool = Module(
-    new ExtReqIDQueue(p.mrp.idWidth, p.writeTxns, p.chanID)).io
+    new ReqIDQueue(p.mrp.idWidth, p.writeTxns, p.chanID)).io
   writeReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
 
   // data associated with write req waits here for the response to come
