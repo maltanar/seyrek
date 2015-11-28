@@ -1,6 +1,9 @@
 #ifndef PARALLELSPMV_HPP
 #define PARALLELSPMV_HPP
 
+#include <iostream>
+using namespace std;
+
 #include <vector>
 #include "cscspmv.hpp"
 #include "hwcscspmv.hpp"
@@ -80,11 +83,15 @@ public:
   }
 
   // TODO expose proper stats
-  virtual unsigned int statInt(std::string name) { return 0;}
+  virtual unsigned int statInt(std::string name) {
+    if(name == "cyclesRegular") return findMaxPEStat(name);
+    else return 0;
+  }
+
 
   virtual std::vector<std::string> statKeys() {
     std::vector<std::string> keys;
-    keys.push_back("matrix");
+    keys.push_back("cyclesRegular");
     return keys;
   }
 
@@ -115,6 +122,20 @@ protected:
     for(unsigned int pe = 0; pe < m_numPEs; pe++) {
       m_pe[pe]->setModeAsync(mode, false);
     }
+  }
+
+  unsigned int findMaxPEStat(std::string key) {
+	unsigned int foundMax = 0;
+	unsigned int foundID = 0;
+	for(unsigned int pe = 0; pe < m_numPEs; pe++) {
+	  unsigned int stat = m_pe[pe]->statInt(key);
+	  //cout << "pe " << pe << " " << key << " " << stat << endl;
+	  if(stat > foundMax) {
+	    foundID = pe;
+	    foundMax = stat;
+	  }
+	}
+	return foundMax;
   }
 
 };

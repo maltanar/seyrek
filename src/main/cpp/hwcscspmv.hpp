@@ -10,7 +10,7 @@
 #include "seyrekconsts.hpp"
 
 // number of registers per SpMV PE
-#define HWSPMVPE_REGS   16
+#define HWSPMVPE_REGS   17
 
 // TODO better control of acc-host buffer duplication in sw drivers --
 // right now there are two copies of all (host+accel) and coherency mvs.
@@ -20,6 +20,7 @@ template <class SpMVInd, class SpMVVal>
 class HWSpMV : public virtual CSCSpMV<SpMVInd, SpMVVal>, public AddMulSemiring<SpMVInd, SpMVVal> {
 public:
   HWSpMV(WrapperRegDriver * driver, unsigned int peNum = 0, const char * attachName = 0) {
+    m_cyclesRegular = 0;
     m_attachName = attachName;
     m_platform = driver;
     m_acc_indPtrs = 0;
@@ -35,7 +36,7 @@ public:
     m_peNum = peNum;
     if(attachName != 0)
       m_platform->attach(attachName);
-  } 
+  }
 
   virtual ~HWSpMV() {if(m_attachName !=0) m_platform->detach();}
 
@@ -105,11 +106,14 @@ public:
   }
 
   // TODO expose proper stats
-  virtual unsigned int statInt(std::string name) { return 0;}
+  virtual unsigned int statInt(std::string name) {
+    if(name == "cyclesRegular") return m_cyclesRegular;
+	else return 0;
+  }
 
   virtual std::vector<std::string> statKeys() {
     std::vector<std::string> keys;
-    keys.push_back("matrix");
+    keys.push_back("cyclesRegular");
     return keys;
   }
 
@@ -127,10 +131,19 @@ public:
     // TODO check current status first!
     set_mode(mode);
     if(start) set_start(1);
-    else set_start(0);
+    else {
+      if(mode == START_REGULAR) {
+        m_cyclesRegular = get_cycle_count();
+      }
+      set_start(0);
+    }
   }
 
 protected:
+  // statistics
+  unsigned int m_cyclesRegular;
+
+  // matrix data
   using CSCSpMV<SpMVInd, SpMVVal>::m_A;
   using CSCSpMV<SpMVInd, SpMVVal>::m_y;
   using CSCSpMV<SpMVInd, SpMVVal>::m_x;
@@ -158,7 +171,8 @@ protected:
     offsOutVecLo    = 13,
     offsRows        = 14,
     offsCols        = 15,
-    offsNZ          = 16
+    offsNZ          = 16,
+    offsCycleCount  = 17
   } HWSpMVReg;
   // readReg and writeReg use peNum to add a base offset to the desired register ID
   AccelReg readReg(HWSpMVReg reg) {return m_platform->readReg(m_peNum * HWSPMVPE_REGS + reg);}
@@ -176,6 +190,7 @@ protected:
   void set_csc_rows(AccelReg value) {writeReg(offsRows, value);}
   void set_csc_cols(AccelReg value) {writeReg(offsCols, value);}
   void set_csc_nz(AccelReg value) {writeReg(offsNZ, value);}
+  AccelReg get_cycle_count() {return readReg(offsCycleCount);}
 
   // accelerator-side versions of SpMV data
   SpMVInd * m_acc_indPtrs;
@@ -195,6 +210,9 @@ protected:
     set_start(1);
     // TODO add timeout option here?
     while(get_finished() != 1);
+    if(mode == START_REGULAR) {
+      m_cyclesRegular = get_cycle_count();
+    }
     set_start(0);
   }
 
