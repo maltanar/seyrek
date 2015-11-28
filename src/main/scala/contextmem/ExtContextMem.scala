@@ -28,7 +28,6 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   // pool of available read request IDs
   val readReqPool = Module(
     new ReqIDQueue(p.mrp.idWidth, p.readTxns, p.chanID)).io
-  readReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
 
   // data associated with read req waits here for the response to come
   val readWait = Mem(io.contextLoadReq.bits, p.readTxns)
@@ -83,7 +82,6 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   // pool of available write request IDs
   val writeReqPool = Module(
     new ReqIDQueue(p.mrp.idWidth, p.writeTxns, p.chanID)).io
-  writeReqPool.initStart := io.start & (io.mode === SeyrekModes.START_INIT)
 
   // data associated with write req waits here for the response to come
   val writeWait = Mem(io.contextSaveReq.bits.ind, p.writeTxns)
@@ -135,9 +133,6 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
 
   // finished signal for the ExtContextMem
   io.finished := Bool(true)
-  when (io.mode === SeyrekModes.START_INIT) {
-    io.finished := readReqPool.initFinished & writeReqPool.initFinished
-  }
 }
 
 class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
