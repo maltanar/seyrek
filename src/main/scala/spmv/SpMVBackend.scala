@@ -41,22 +41,22 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   // these will be feeding the frontend with data
   val readColPtr = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.indWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
-    chanID = 0
+    chanID = 0, readOrderCache = true
   )))
 
   val readRowInd = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.indWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
-    chanID = 1
+    chanID = 4, readOrderCache = true
   )))
 
   val readNZData = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.valWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
-    chanID = 2
+    chanID = 8, readOrderCache = true
   )))
 
   val readInpVec = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.valWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
-    chanID = 3
+    chanID = 12, readOrderCache = true
   )))
 
   // use the column pointers to generate column lengths with StreamDelta
@@ -74,11 +74,11 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   // TODO make the stream<->port matching more configurable
   // TODO make convenience function/object for generating several readers
   val readSeqIntl = Module(new ReqInterleaver(5, p.mrp)).io
-  readColPtr.io.req <> readSeqIntl.reqIn(readColPtr.p.chanID)
-  readRowInd.io.req <> readSeqIntl.reqIn(readRowInd.p.chanID)
-  readNZData.io.req <> readSeqIntl.reqIn(readNZData.p.chanID)
-  readInpVec.io.req <> readSeqIntl.reqIn(readInpVec.p.chanID)
-  contextmem.io.mainMem.memRdReq <> readSeqIntl.reqIn(contextmem.p.chanID)
+  readColPtr.io.req <> readSeqIntl.reqIn(0)
+  readRowInd.io.req <> readSeqIntl.reqIn(1)
+  readNZData.io.req <> readSeqIntl.reqIn(2)
+  readInpVec.io.req <> readSeqIntl.reqIn(3)
+  contextmem.io.mainMem.memRdReq <> readSeqIntl.reqIn(4)
 
   readSeqIntl.reqOut <> io.reqSeq.memRdReq
 
@@ -88,17 +88,17 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   // - any response with ID less than ctxMemReqID is routed to chan=id
   // - all other responses are routed to the ContextMem
   val respDecode = {x: GenericMemoryResponse =>
-    Mux(x.channelID < ctxMemReqID, x.channelID, ctxMemReqID)
+    Mux(x.channelID < ctxMemReqID, x.channelID >> UInt(2), ctxMemReqID >> UInt(2))
   }
   val readSeqDeintl = Module(new QueuedDeinterleaver(5, p.mrp, 4, respDecode)).io
   io.reqSeq.memRdRsp <> readSeqDeintl.rspIn
 
   // TODO get ID ranges from req generators + automatically set up these conns
-  readSeqDeintl.rspOut(readColPtr.p.chanID) <> readColPtr.io.rsp
-  readSeqDeintl.rspOut(readRowInd.p.chanID) <> readRowInd.io.rsp
-  readSeqDeintl.rspOut(readNZData.p.chanID) <> readNZData.io.rsp
-  readSeqDeintl.rspOut(readInpVec.p.chanID) <> readInpVec.io.rsp
-  readSeqDeintl.rspOut(contextmem.p.chanID) <> contextmem.io.mainMem.memRdRsp
+  readSeqDeintl.rspOut(0) <> readColPtr.io.rsp
+  readSeqDeintl.rspOut(1) <> readRowInd.io.rsp
+  readSeqDeintl.rspOut(2) <> readNZData.io.rsp
+  readSeqDeintl.rspOut(3) <> readInpVec.io.rsp
+  readSeqDeintl.rspOut(4) <> contextmem.io.mainMem.memRdRsp
 
   // write channel used only by the ContextMem
   // TODO parametrize write channel usage?

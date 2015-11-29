@@ -36,14 +36,14 @@ class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 
 class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "UInt64ExtSpMV"
-  val numPEs = 1
+  val numPEs = 4
   val portsPerPE = 1
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
   val makeContextMemory = { () =>
-    new ExtContextMem(new ExtContextMemParams(
-      readTxns = 1, writeTxns = 1, chanID = 4,
+    new OoOExtContextMem(new ExtContextMemParams(
+      readTxns = 4, writeTxns = 4, chanID = 16,
       idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
     ))
   }
@@ -56,7 +56,7 @@ class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
     new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a*b})
   }
   val issueWindow = 4
-  val makeScheduler = { () => new InOrderScheduler(this) }
+  val makeScheduler = { () => new OoOComplScheduler(this) }
 }
 
 object SeyrekMainObj {
