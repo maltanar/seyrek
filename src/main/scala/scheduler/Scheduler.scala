@@ -31,6 +31,26 @@ abstract class Scheduler(p: SeyrekParams) extends Module {
   // indicate how the scheduler behaves with its instructions scheduling
   def dispatchOrdered: Boolean  // whether dispatches are in-order
   def completeOrdered: Boolean  // whether completes are in-order
+
+  // useful printfs to debug scheduler entry/exit, uncomment as needed
+  /*
+  when(io.instr.valid & io.instr.ready) {
+    printf("enter scheduler: %d\n", io.instr.bits.ind)
+  }
+
+
+  when(io.compl.valid & io.compl.ready) {
+    printf("exit scheduler: %d\n", io.compl.bits)
+  }
+
+  when(io.instr.valid & !io.instr.ready) {
+    printf("can't enter scheduler: %d \n", io.instr.bits.ind)
+  }
+
+  when(io.compl.valid & !io.compl.ready) {
+    printf("can't exit scheduler: %d\n", io.compl.bits)
+  }
+  */
 }
 
 // null scheduler: basically does nothing, just pushing the incoming

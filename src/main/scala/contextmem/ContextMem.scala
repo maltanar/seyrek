@@ -30,4 +30,28 @@ abstract class ContextMem(val p: ContextMemParams) extends Module {
 
   // whether the ContextMem responds to load/save commands in-order
   def inOrder: Boolean
+
+  // useful printfs to debug ContextMem, uncomment as needed
+  /*
+  when(io.contextLoadReq.valid & io.contextLoadReq.ready) {
+    printf("contextLoadReq: id = %d ctx = %x\n", io.contextLoadReq.bits.ind,
+    io.contextLoadReq.bits.value)
+  }
+
+  when(io.contextSaveReq.valid & io.contextSaveReq.ready) {
+    printf("contextSaveReq: id = %d ctx = %x\n", io.contextSaveReq.bits.ind,
+    io.contextSaveReq.bits.value)
+  }
+
+  when(io.contextLoadRsp.valid & io.contextLoadRsp.ready) {
+    printf("contextLoadRsp: id = %d ctx = %x %x\n",
+       io.contextLoadRsp.bits.rowInd, io.contextLoadRsp.bits.matrixVal,
+       io.contextLoadRsp.bits.vectorVal
+     )
+  }
+
+  when(io.contextSaveRsp.valid & io.contextSaveRsp.ready) {
+    printf("contextSaveRsp: id = %d \n", io.contextSaveRsp.bits)
+  }
+  */
 }

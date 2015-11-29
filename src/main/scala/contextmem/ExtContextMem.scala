@@ -110,7 +110,7 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   // TODO WriteArray should also take in id stream, coming from the id pool
   // as a direct signal for now. safe because StreamJoin synchronizes
   // both the request and id streams.
-  val wr = WriteArray(saveMemFork.outA, io.contextBase, UInt(p.chanID), p.mrp)
+  val wr = WriteArray(saveMemFork.outA, io.contextBase, writeReqPool.idOut.bits, p.mrp)
   wr <> io.mainMem.memWrReq
   saveMemFork.outB <> io.mainMem.memWrDat
 

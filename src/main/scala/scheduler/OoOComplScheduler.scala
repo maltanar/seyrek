@@ -27,5 +27,5 @@ class OoOComplScheduler(p: SeyrekParams) extends Scheduler(p) {
   forker.outA <> io.issue
   forker.outB <> inFlight.in
 
-  io.compl <> inFlight.rm 
+  io.compl <> inFlight.rm
 }
