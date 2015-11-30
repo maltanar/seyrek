@@ -57,13 +57,23 @@ class OpMulCombinatorial(w: Int) extends SemiringOp(w) {
 // fallthrough, so it can be used to add forced latency to an op
 // the ready signal is still combinatorially linked to allow fast
 // handshakes, like a Chisel queue with pipe=true flow=false
-class SystolicReg(w: Int) extends Module {
+// supports defining a transfer function from input to output, to support
+// building decoupled pipelined operators
+// parameters:
+
+class SystolicRegParams(
+  val wIn: Int, // wIn: width of input stream in bits
+  val wOut: Int, // wOut: width of output stream in bits
+  val fxn: UInt => UInt = {x => x} // fxn: function to apply on the way out
+)
+
+class SystolicReg(val p: SystolicRegParams) extends Module {
   val io = new Bundle {
-    val in = Decoupled(UInt(width = w)).flip
-    val out = Decoupled(UInt(width = w))
+    val in = Decoupled(UInt(width = p.wIn)).flip
+    val out = Decoupled(UInt(width = p.wOut))
   }
   val regValid = Reg(init = Bool(false))
-  val regData = Reg(init = UInt(0, w))
+  val regData = Reg(init = UInt(0, p.wOut))
   val allowNewData = (!regValid || io.out.ready)
 
   io.out.bits := regData
@@ -71,9 +81,40 @@ class SystolicReg(w: Int) extends Module {
   io.in.ready := allowNewData
 
   when(allowNewData) {
-    regData := io.in.bits
+    regData := p.fxn(io.in.bits)
     regValid := io.in.valid
   }
+}
+
+// convenience constructor for SystolicReg
+object SystolicReg {
+  def apply(w: Int) = {Module(new SystolicReg(new SystolicRegParams(w, w))).io}
+}
+
+// convenienve constructor for SystolicRegParams
+object SystolicStage {
+  def apply(wIn: Int, wOut: Int, fxn: UInt => UInt) = {
+    new SystolicRegParams(wIn, wOut, fxn)
+  }
+}
+
+// creates a sequence of systolic reg stages as described the <stages> param
+class SystolicPipelinedOp(stages: Seq[SystolicRegParams]) extends Module {
+  val numStages = stages.size
+  val io = new Bundle {
+    val in = Decoupled(UInt(width = stages(0).wIn)).flip
+    val out = Decoupled(UInt(width = stages(numStages-1).wOut))
+  }
+  // instantiate all the stages with the appropriate params
+  val stageRegs = Vec.tabulate(numStages) {
+    i: Int => Module(new SystolicReg(stages(i))).io
+  }
+  // connect the first stage input to the main input
+  io.in <> stageRegs(0).in
+  // connect i/o of all intermediate stages
+  for(i <- 0 until numStages-1) { stageRegs(i).out <> stageRegs(i+1).in }
+  // connect main output to last stage output
+  stageRegs(numStages-1).out <> io.out
 }
 
 class PipelinedInt64Mul extends SemiringOp(64) {
@@ -128,7 +169,7 @@ extends SemiringOp(w) {
     System.exit(-1)
   }
   // connect transformed input to first stage
-  val delayPipe = Vec.fill(n) {Module(new SystolicReg(w)).io}
+  val delayPipe = Vec.fill(n) {SystolicReg(w)}
   delayPipe(0).in.valid := io.in.valid
   delayPipe(0).in.bits := fxn(io.in.bits.first, io.in.bits.second)
   io.in.ready := delayPipe(0).in.ready
