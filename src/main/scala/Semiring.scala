@@ -99,8 +99,70 @@ object SystolicReg {
     )
     Module(new SystolicReg[UInt, UInt](uintP)).io
   }
+  def apply[TI <: Data, TO <: Data](tIn: TI, tOut: TO, fxn: TI => TO) = {
+    val p = new SystolicRegParams[TI,TO](tIn, tOut, fxn)
+    Module(new SystolicReg[TI,TO](p)).io
+  }
+
+  def apply[TI <: Data, TO <: Data](tIn: TI, tOut: TO, fxn: TI => TO,
+    in: DecoupledIO[TI]
+  ) = {
+    val p = new SystolicRegParams[TI,TO](tIn, tOut, fxn)
+    val mod = Module(new SystolicReg[TI,TO](p)).io
+    in <> mod.in
+    mod.out
+  }
 }
 
+class PipelinedMultStageData(w: Int, wMul: Int) extends Bundle {
+  val signA = Bool()
+  val a = UInt(width = w)
+  val signB = Bool()
+  val b = UInt(width = w)
+  val mulRes = UInt(width = 2*wMul)
+  val addRes = UInt(width = w)
+
+  override def cloneType: this.type = new PipelinedMultStageData(w, wMul).asInstanceOf[this.type]
+}
+
+class SystolicTest extends SemiringOp(64) {
+  val latency = 16
+  val wMul: Int = 32
+  val metad = new PipelinedMultStageData(64, wMul)
+
+  // stage 0: convert to signed magnitude form
+  val fxnS0 = {i: SemiringOperands => val m = new PipelinedMultStageData(64, wMul)
+    m.signA := i.first(63)
+    m.signB := i.second(63)
+    m.a := Mux(i.first(63), UInt(~i.first + UInt(1), width = 64), i.first)
+    m.b := Mux(i.second(63), UInt(~i.second + UInt(1), width = 64), i.second)
+    m.mulRes := UInt(0)
+    m.addRes := UInt(0)
+    m
+  }
+  val s0 = SystolicReg(io.in.bits, metad, fxnS0, io.in)
+
+  val fMaker = { (offA: Int, offB: Int) =>
+    {i: PipelinedMultStageData => val m = new PipelinedMultStageData(64, wMul)
+      m := i
+      m.mulRes := i.a((wMul*(offA+1))-1, wMul*offA) * i.b((wMul*(offB+1))-1, wMul*offB)
+      m.addRes := i.mulRes + i.addRes
+      m
+    }
+  }
+
+  val s1 = SystolicReg(metad, metad, fMaker(0, 0), s0)
+  val s2 = SystolicReg(metad, metad, fMaker(0, 1), s1)
+  val s3 = SystolicReg(metad, metad, fMaker(1, 0), s2)
+
+  // convert back to 2s complement on the way out
+  s3.ready := io.out.ready
+  io.out.valid := s3.valid
+
+  val magnRes = Cat(UInt(0, width=1), s3.bits.addRes(62, 0))
+  val isResultNegative = s3.bits.signA ^ s3.bits.signB
+  io.out.bits := Mux(isResultNegative, ~magnRes + UInt(1), magnRes)
+}
 
 
 class PipelinedInt64Mul extends SemiringOp(64) {
