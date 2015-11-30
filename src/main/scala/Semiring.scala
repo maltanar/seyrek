@@ -61,61 +61,47 @@ class OpMulCombinatorial(w: Int) extends SemiringOp(w) {
 // building decoupled pipelined operators
 // parameters:
 
-class SystolicRegParams(
-  val wIn: Int, // wIn: width of input stream in bits
-  val wOut: Int, // wOut: width of output stream in bits
-  val fxn: UInt => UInt = {x => x} // fxn: function to apply on the way out
+class SystolicRegParams[TI <: Data, TO <: Data](
+  val tIn: TI, // wIn: width of input stream in bits
+  val tOut: TO, // wOut: width of output stream in bits
+  val fxn: TI => TO // fxn: function to apply on the way out
 )
 
-class SystolicReg(val p: SystolicRegParams) extends Module {
+class SystolicReg[TI <: Data, TO <: Data](val p: SystolicRegParams[TI, TO])
+extends Module {
   val io = new Bundle {
-    val in = Decoupled(UInt(width = p.wIn)).flip
-    val out = Decoupled(UInt(width = p.wOut))
+    val in = Decoupled(p.tIn.cloneType).flip
+    val out = Decoupled(p.tOut.cloneType)
   }
   val regValid = Reg(init = Bool(false))
-  val regData = Reg(init = UInt(0, p.wOut))
+  val resetVal = UInt(0, width = p.tOut.getWidth())
+  val regData = RegInit[TO](p.tOut.fromBits(resetVal))
   val allowNewData = (!regValid || io.out.ready)
 
   io.out.bits := regData
   io.out.valid := regValid
   io.in.ready := allowNewData
+  // somehow this needs to be outside the when (mux) below,
+  // otherwise Chisel complains about "no default value on wire"
+  val updData: TO = p.fxn(io.in.bits)
 
   when(allowNewData) {
-    regData := p.fxn(io.in.bits)
+    regData := updData
     regValid := io.in.valid
   }
 }
 
 // convenience constructor for SystolicReg
 object SystolicReg {
-  def apply(w: Int) = {Module(new SystolicReg(new SystolicRegParams(w, w))).io}
-}
-
-// convenienve constructor for SystolicRegParams
-object SystolicStage {
-  def apply(wIn: Int, wOut: Int, fxn: UInt => UInt) = {
-    new SystolicRegParams(wIn, wOut, fxn)
+  def apply(w: Int) = {
+    val uintP = new SystolicRegParams[UInt, UInt](
+      UInt(width = w), UInt(width = w), fxn = {x: UInt => x}
+    )
+    Module(new SystolicReg[UInt, UInt](uintP)).io
   }
 }
 
-// creates a sequence of systolic reg stages as described the <stages> param
-class SystolicPipelinedOp(stages: Seq[SystolicRegParams]) extends Module {
-  val numStages = stages.size
-  val io = new Bundle {
-    val in = Decoupled(UInt(width = stages(0).wIn)).flip
-    val out = Decoupled(UInt(width = stages(numStages-1).wOut))
-  }
-  // instantiate all the stages with the appropriate params
-  val stageRegs = Vec.tabulate(numStages) {
-    i: Int => Module(new SystolicReg(stages(i))).io
-  }
-  // connect the first stage input to the main input
-  io.in <> stageRegs(0).in
-  // connect i/o of all intermediate stages
-  for(i <- 0 until numStages-1) { stageRegs(i).out <> stageRegs(i+1).in }
-  // connect main output to last stage output
-  stageRegs(numStages-1).out <> io.out
-}
+
 
 class PipelinedInt64Mul extends SemiringOp(64) {
   val latency = 3
