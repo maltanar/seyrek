@@ -4,6 +4,7 @@ import Chisel._
 import TidbitsDMA._
 import TidbitsOCM._
 import TidbitsStreams._
+import TidbitsMath._
 
 // TODO sanity-check whether scheduler and contextmem orderings match
 // TODO add ordering params to semirings as well?
@@ -19,8 +20,8 @@ trait SeyrekParams {
   // context memory creation
   def makeContextMemory: () => ContextMem
   // semiring operations
-  def makeSemiringAdd: () => SemiringOp
-  def makeSemiringMul: () => SemiringOp
+  def makeSemiringAdd: () => BinaryMathOp
+  def makeSemiringMul: () => BinaryMathOp
   // scheduler-related
   def issueWindow: Int
   def makeScheduler: () => Scheduler
@@ -29,7 +30,7 @@ trait SeyrekParams {
   def i = UInt(width = indWidth)  // index (context identifier / row index)
   def wu = new WorkUnit(valWidth, indWidth) // (value, value, index)
   def vi = new ValIndPair(valWidth, indWidth) // (value, index)
-  def vv = new SemiringOperands(valWidth) // (value, value)
+  def vv = new BinaryMathOperands(valWidth) // (value, value)
 }
 
 class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
@@ -74,12 +75,12 @@ class ContextfulSemiringOpIO(p: SeyrekParams) extends Bundle {
   val out = Decoupled(p.vi)
 }
 
-class ContextfulSemiringOp(p: SeyrekParams, instFxn: () => SemiringOp)
+class ContextfulSemiringOp(p: SeyrekParams, instFxn: () => BinaryMathOp)
 extends Module {
   val io = new ContextfulSemiringOpIO(p)
   val opInst = Module(instFxn())
   val forker = Module(new StreamFork(genIn = p.wu, genA = p.vv, genB = p.i,
-    forkA = {wu: WorkUnit => SemiringOperands(wu.matrixVal, wu.vectorVal)},
+    forkA = {wu: WorkUnit => BinaryMathOperands(wu.matrixVal, wu.vectorVal)},
     forkB = {wu: WorkUnit => wu.rowInd}
   )).io
   val joiner = Module(new StreamJoin(genA = p.v, genB = p.i, genOut = p.vi,
