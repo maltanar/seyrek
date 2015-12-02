@@ -141,3 +141,29 @@ def convertMatrix(A, name, startAddr=dramBase):
   print "NonZ = " + str(A.nnz)
   
 
+def dynamicPartitionLoadBalance(A, n):
+  # the only thing colptrs are relevant for is how the input vector is reused
+  # for this load balance calculation we are only interested in how NZs are
+  # distributed
+  nzPerDiv = A.nnz / n
+  rowsPerDiv = A.shape[0] / n
+  peWork = [[0 for i in range(nzPerDiv)] for p in range(n)]
+  for divnz in range(nzPerDiv):
+    for pe in range(n):
+      ri = A.indices[nzPerDiv * pe + divnz]
+      targetPE = int(ri / rowsPerDiv)
+      #targetPE = ri % n
+      if targetPE >= n:
+        targetPE = n-1
+      peWork[targetPE][divnz] += 1
+  # present a brief analysis of the load balance
+  for pe in range(n):
+    numIdle = size(filter(lambda x: x == 0, peWork[pe]))
+    numNormal = size(filter(lambda x: x == 1, peWork[pe]))
+    numOverworked = nzPerDiv - (numIdle + numNormal)
+    print "PE #" + str(pe) + ":"
+    print "Idle: " + str(float(100*numIdle/nzPerDiv)) + "%"
+    print "Normal: " + str(float(100*numNormal/nzPerDiv)) + "%"
+    print "Overworked: " + str(float(100*numOverworked/nzPerDiv)) + "%"
+    print "Max work at once: " + str(max(peWork[pe]))
+  return peWork
