@@ -82,6 +82,10 @@ public:
     return true;
   }
 
+  HWSpMV<SpMVInd, SpMVVal> * getPE(unsigned int ind) {
+	  return m_pe[ind];
+  }
+
   // TODO expose proper stats
   virtual unsigned int statInt(std::string name) {
     if(name == "cyclesRegular") return findMaxPEStat(name);

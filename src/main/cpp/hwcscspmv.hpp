@@ -10,7 +10,7 @@
 #include "seyrekconsts.hpp"
 
 // number of registers per SpMV PE
-#define HWSPMVPE_REGS   17
+#define HWSPMVPE_REGS   18
 
 // TODO better control of acc-host buffer duplication in sw drivers --
 // right now there are two copies of all (host+accel) and coherency mvs.
@@ -139,6 +139,8 @@ public:
     }
   }
 
+  void set_ctx_txns(AccelReg value) {writeReg(offsCtxTxns, value);}
+
 protected:
   // statistics
   unsigned int m_cyclesRegular;
@@ -172,7 +174,8 @@ protected:
     offsRows        = 14,
     offsCols        = 15,
     offsNZ          = 16,
-    offsCycleCount  = 17
+    offsCycleCount  = 17,
+    offsCtxTxns		= 18
   } HWSpMVReg;
   // readReg and writeReg use peNum to add a base offset to the desired register ID
   AccelReg readReg(HWSpMVReg reg) {return m_platform->readReg(m_peNum * HWSPMVPE_REGS + reg);}
@@ -191,6 +194,7 @@ protected:
   void set_csc_cols(AccelReg value) {writeReg(offsCols, value);}
   void set_csc_nz(AccelReg value) {writeReg(offsNZ, value);}
   AccelReg get_cycle_count() {return readReg(offsCycleCount);}
+
 
   // accelerator-side versions of SpMV data
   SpMVInd * m_acc_indPtrs;
