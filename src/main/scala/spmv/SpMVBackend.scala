@@ -13,6 +13,8 @@ class SpMVBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csc = new CSCSpMV(p).asInput
   // output to frontend
   val workUnits = Decoupled(p.wu)
+  // context init
+  val contextReqCnt = UInt(INPUT, 10)
   // context load port
   val contextLoadReq = Decoupled(p.vi).flip
   val contextLoadRsp = Decoupled(p.wu)
@@ -39,6 +41,7 @@ class SpMVBackend(p: SeyrekParams) extends Module {
     // channel ID base is passed as argument to ctx.mem. constructor
     p.makeContextMemory(memsys.getChanParams("ctxmem"))
   )
+  contextmem.io.contextReqCnt := io.contextReqCnt
   contextmem.io.start := io.start
   contextmem.io.mode := io.mode
   contextmem.io.contextBase := io.csc.outVec

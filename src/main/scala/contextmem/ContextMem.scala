@@ -12,6 +12,8 @@ class ContextMemParams(
 
 class ContextMemIO(p: ContextMemParams) extends Bundle with SeyrekCtrlStat {
   // SeyrekCtrlStat is inherited from base trait
+  // how many OMRs should be allocated (if applicable)
+  val contextReqCnt = UInt(INPUT, 10)
   // context load port
   val contextLoadReq = Decoupled(new ValIndPair(p.dataBits, p.idBits)).flip
   val contextLoadRsp = Decoupled(new WorkUnit(p.dataBits, p.idBits))

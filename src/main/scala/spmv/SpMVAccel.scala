@@ -10,6 +10,7 @@ class SpMVProcElemIF(pSeyrek: SeyrekParams) extends Bundle {
   val finished = Bool(OUTPUT)
   val csc = new CSCSpMV(pSeyrek).asInput
   val cycleCount = UInt(OUTPUT, width = 32)
+  val contextReqCnt = UInt(INPUT, width = 10)
 }
 
 class SpMVAccel(p: PlatformWrapperParams, pSeyrek: SeyrekParams)
@@ -26,6 +27,7 @@ extends GenericAccelerator(p) {
     val frontend = Module(new SpMVFrontend(pSeyrek))
     val ioPE = io.pe(i)
 
+    backend.io.contextReqCnt := ioPE.contextReqCnt
     backend.io.start := ioPE.start
     frontend.io.start := ioPE.start
 

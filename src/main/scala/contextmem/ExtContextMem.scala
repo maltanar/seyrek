@@ -28,6 +28,8 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   // pool of available read request IDs
   val readReqPool = Module(
     new ReqIDQueue(p.mrp.idWidth, p.readTxns, p.chanID)).io
+  readReqPool.doInit := (io.mode === SeyrekModes.START_INIT) & io.start
+  readReqPool.initCount := io.contextReqCnt
 
   // data associated with read req waits here for the response to come
   val readWait = Mem(io.contextLoadReq.bits, p.readTxns)
@@ -82,6 +84,8 @@ class OoOExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
   // pool of available write request IDs
   val writeReqPool = Module(
     new ReqIDQueue(p.mrp.idWidth, p.writeTxns, p.chanID)).io
+  writeReqPool.doInit := (io.mode === SeyrekModes.START_INIT) & io.start
+  writeReqPool.initCount := io.contextReqCnt
 
   // data associated with write req waits here for the response to come
   val writeWait = Mem(io.contextSaveReq.bits.ind, p.writeTxns)
@@ -195,5 +199,5 @@ class ExtContextMem(p: ExtContextMemParams) extends ContextMem(p) {
       join = {(i: UInt, mr: GenericMemoryResponse) => i}
     ) <> io.contextSaveRsp
 
-  } else throw new Exception("OoO ExtContextMem not yet supported")
+  } else throw new Exception("Use OoOExtContextMem for multi-outstanding requests")
 }
