@@ -9,16 +9,34 @@ import TidbitsAXI._
 import TidbitsDMA._
 import TidbitsPlatformWrapper._
 
+object ChannelConfigs {
+  val twoPort = Map(
+    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "ctxmem" -> ReadChanParams(maxReadTxns = 8, port = 1)
+  )
+  val onePort = Map(
+    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "ctxmem" -> ReadChanParams(maxReadTxns = 8, port = 0)
+  )
+}
+
 class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "UInt32BRAMSpMV"
   val numPEs = 1
   val portsPerPE = 1
+  val chanConfig = ChannelConfigs.onePort
   val indWidth = 32
   val valWidth = 32
   val mrp = p.toMemReqParams()
-  val makeContextMemory = { () =>
+  val makeContextMemory = { c: Int =>
     new BRAMContextMem(new BRAMContextMemParams(
-      depth = 1024, readLatency = 1, writeLatency = 1, chanID = 4,
+      depth = 1024, readLatency = 1, writeLatency = 1, chanID = c,
       idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
     ))
   }
@@ -38,12 +56,13 @@ class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "UInt64ExtSpMV"
   val numPEs = 1
   val portsPerPE = 1
+  val chanConfig = ChannelConfigs.onePort
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
-  val makeContextMemory = { () =>
+  val makeContextMemory = { c: Int =>
     new ExtContextMem(new ExtContextMemParams(
-      readTxns = 1, writeTxns = 1, chanID = 4,
+      readTxns = 1, writeTxns = 1, chanID = c,
       idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
     ))
   }

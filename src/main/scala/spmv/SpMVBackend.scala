@@ -20,15 +20,25 @@ class SpMVBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val contextSaveReq = Decoupled(p.vi).flip
   val contextSaveRsp = Decoupled(p.i)
   // memory ports
-  // TODO parametrize SpMV backend port count and mapping
-  val reqSeq = new GenericMemoryMasterPort(p.mrp)
+  val mainMem = Vec.fill(p.portsPerPE) {new GenericMemoryMasterPort(p.mrp)}
 }
 
 class SpMVBackend(p: SeyrekParams) extends Module {
   val io = new SpMVBackendIO(p)
 
+  val memsys = Module(new MultiChanMultiPort(p.mrp, p.portsPerPE,
+    chans = p.chanConfig))
+
+  for(i <- 0 until p.portsPerPE) {
+    memsys.io.memReq(i) <> io.mainMem(i).memRdReq
+    io.mainMem(i).memRdRsp <> memsys.io.memRsp(i)
+  }
+
   // instantiate the context memory
-  val contextmem = Module(p.makeContextMemory())
+  val contextmem = Module(
+    // channel ID base is passed as argument to ctx.mem. constructor
+    p.makeContextMemory(memsys.getChanParams("ctxmem").chanBaseID)
+  )
   contextmem.io.start := io.start
   contextmem.io.mode := io.mode
   contextmem.io.contextBase := io.csc.outVec
@@ -36,28 +46,41 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   contextmem.io.contextLoadRsp <> io.contextLoadRsp
   io.contextSaveReq <> contextmem.io.contextSaveReq
   contextmem.io.contextSaveRsp <> io.contextSaveRsp
+  memsys.connectChanReqRsp("ctxmem", contextmem.io.mainMem.memRdReq,
+    contextmem.io.mainMem.memRdRsp
+  )
+  // put the context mem write channel onto the same port as the read
+  // TODO write port sharing? this is the only write so far
+  val ctxMemPort = memsys.getChanParams("ctxmem").port
+  contextmem.io.mainMem.memWrReq <> io.mainMem(ctxMemPort).memWrReq
+  contextmem.io.mainMem.memWrDat <> io.mainMem(ctxMemPort).memWrDat
+  io.mainMem(ctxMemPort).memWrRsp <> contextmem.io.mainMem.memWrRsp
 
   // instantiate StreamReaders for fetching the sequential SpMV streams
   // these will be feeding the frontend with data
   val readColPtr = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.indWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
-    chanID = 0
+    chanID = memsys.getChanParams("colptr").chanBaseID
   )))
+  memsys.connectChanReqRsp("colptr", readColPtr.io.req, readColPtr.io.rsp)
 
   val readRowInd = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.indWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
-    chanID = 1
+    chanID = memsys.getChanParams("rowind").chanBaseID
   )))
+  memsys.connectChanReqRsp("rowind", readRowInd.io.req, readRowInd.io.rsp)
 
   val readNZData = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.valWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
-    chanID = 2
+    chanID = memsys.getChanParams("nzdata").chanBaseID
   )))
+  memsys.connectChanReqRsp("nzdata", readNZData.io.req, readNZData.io.rsp)
 
   val readInpVec = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.valWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
-    chanID = 3
+    chanID = memsys.getChanParams("inpvec").chanBaseID
   )))
+  memsys.connectChanReqRsp("inpvec", readInpVec.io.req, readInpVec.io.rsp)
 
   // use the column pointers to generate column lengths with StreamDelta
   val colLens = StreamDelta(readColPtr.io.out)
@@ -69,42 +92,6 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   def makeWorkUnit(vi: ValIndPair, v: UInt): WorkUnit = {
     WorkUnit(vi.value, v, vi.ind) }
   StreamJoin(nzAndInd, repeatedVec, p.wu, makeWorkUnit) <> io.workUnits
-
-  // interleave all sequential streams onto a single memory port
-  // TODO make the stream<->port matching more configurable
-  // TODO make convenience function/object for generating several readers
-  val readSeqIntl = Module(new ReqInterleaver(5, p.mrp)).io
-  readColPtr.io.req <> readSeqIntl.reqIn(readColPtr.p.chanID)
-  readRowInd.io.req <> readSeqIntl.reqIn(readRowInd.p.chanID)
-  readNZData.io.req <> readSeqIntl.reqIn(readNZData.p.chanID)
-  readInpVec.io.req <> readSeqIntl.reqIn(readInpVec.p.chanID)
-  contextmem.io.mainMem.memRdReq <> readSeqIntl.reqIn(contextmem.p.chanID)
-
-  readSeqIntl.reqOut <> io.reqSeq.memRdReq
-
-  // deinterleaver to seperate incoming read responses
-  val ctxMemReqID = UInt(contextmem.p.chanID)
-  // assume that the ContextMem has access to all the higher req ID values:
-  // - any response with ID less than ctxMemReqID is routed to chan=id
-  // - all other responses are routed to the ContextMem
-  val respDecode = {x: GenericMemoryResponse =>
-    Mux(x.channelID < ctxMemReqID, x.channelID, ctxMemReqID)
-  }
-  val readSeqDeintl = Module(new QueuedDeinterleaver(5, p.mrp, 4, respDecode)).io
-  io.reqSeq.memRdRsp <> readSeqDeintl.rspIn
-
-  // TODO get ID ranges from req generators + automatically set up these conns
-  readSeqDeintl.rspOut(readColPtr.p.chanID) <> readColPtr.io.rsp
-  readSeqDeintl.rspOut(readRowInd.p.chanID) <> readRowInd.io.rsp
-  readSeqDeintl.rspOut(readNZData.p.chanID) <> readNZData.io.rsp
-  readSeqDeintl.rspOut(readInpVec.p.chanID) <> readInpVec.io.rsp
-  readSeqDeintl.rspOut(contextmem.p.chanID) <> contextmem.io.mainMem.memRdRsp
-
-  // write channel used only by the ContextMem
-  // TODO parametrize write channel usage?
-  contextmem.io.mainMem.memWrReq <> io.reqSeq.memWrReq
-  contextmem.io.mainMem.memWrDat <> io.reqSeq.memWrDat
-  io.reqSeq.memWrRsp <> contextmem.io.mainMem.memWrRsp
 
   // control signals for StreamReaders
   val startRegular = (io.mode === SeyrekModes.START_REGULAR) & io.start

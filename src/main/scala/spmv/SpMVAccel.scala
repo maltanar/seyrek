@@ -36,8 +36,8 @@ extends GenericAccelerator(p) {
                       frontend.io.finished, backend.io.finished)
 
     ioPE.csc <> backend.io.csc
-    backend.io.reqSeq <> io.memPort(i)
-    // TODO more flexible config for connecting mem ports
+    for(mp <- 0 until pSeyrek.portsPerPE)
+      backend.io.mainMem(mp) <> io.memPort(i * pSeyrek.portsPerPE + mp)
 
     ioPE.csc <> frontend.io.csc
     backend.io.workUnits <> frontend.io.workUnits

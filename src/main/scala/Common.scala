@@ -17,7 +17,7 @@ trait SeyrekParams {
   val ptrWidth: Int = 64  // large enough for big&small platforms
   def mrp: MemReqParams
   // context memory creation
-  def makeContextMemory: () => ContextMem
+  def makeContextMemory: Int => ContextMem
   // semiring operations
   def makeSemiringAdd: () => SemiringOp
   def makeSemiringMul: () => SemiringOp
@@ -30,6 +30,8 @@ trait SeyrekParams {
   def wu = new WorkUnit(valWidth, indWidth) // (value, value, index)
   def vi = new ValIndPair(valWidth, indWidth) // (value, index)
   def vv = new SemiringOperands(valWidth) // (value, value)
+  // channel-to-port mapping
+   def chanConfig: Map[String, ReadChanParams]
 }
 
 class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
