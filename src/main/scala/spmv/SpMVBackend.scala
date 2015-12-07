@@ -37,7 +37,7 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   // instantiate the context memory
   val contextmem = Module(
     // channel ID base is passed as argument to ctx.mem. constructor
-    p.makeContextMemory(memsys.getChanParams("ctxmem").chanBaseID)
+    p.makeContextMemory(memsys.getChanParams("ctxmem"))
   )
   contextmem.io.start := io.start
   contextmem.io.mode := io.mode

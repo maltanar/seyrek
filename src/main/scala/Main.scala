@@ -34,9 +34,9 @@ class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val indWidth = 32
   val valWidth = 32
   val mrp = p.toMemReqParams()
-  val makeContextMemory = { c: Int =>
+  val makeContextMemory = { r: ReadChanParams =>
     new BRAMContextMem(new BRAMContextMemParams(
-      depth = 1024, readLatency = 1, writeLatency = 1, chanID = c,
+      depth = 1024, readLatency = 1, writeLatency = 1, chanID = r.chanBaseID ,
       idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
     ))
   }
@@ -60,9 +60,9 @@ class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
-  val makeContextMemory = { c: Int =>
-    new ExtContextMem(new ExtContextMemParams(
-      readTxns = 1, writeTxns = 1, chanID = c,
+  val makeContextMemory = { r: ReadChanParams =>
+    new OoOExtContextMem(new ExtContextMemParams(
+      readTxns = r.maxReadTxns, writeTxns = r.maxReadTxns, chanID = r.chanBaseID,
       idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
     ))
   }

@@ -17,7 +17,7 @@ trait SeyrekParams {
   val ptrWidth: Int = 64  // large enough for big&small platforms
   def mrp: MemReqParams
   // context memory creation
-  def makeContextMemory: Int => ContextMem
+  def makeContextMemory: ReadChanParams => ContextMem
   // semiring operations
   def makeSemiringAdd: () => SemiringOp
   def makeSemiringMul: () => SemiringOp
