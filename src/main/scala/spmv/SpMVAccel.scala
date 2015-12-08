@@ -57,15 +57,25 @@ extends GenericAccelerator(p) {
       regCycleCount := regCycleCount + UInt(1)
     }
 
+    val yes = Bool(true)
     // StreamMonitors for general progress monitoring -- uncomment to enable
     // and read output as printfs on the Chisel C++ emulator
     /*
-    StreamMonitor(frontend.io.workUnits, Bool(true), "workUnits")
-    StreamMonitor(frontend.io.contextLoadReq, Bool(true), "contextLoadReq")
-    StreamMonitor(frontend.io.contextSaveReq, Bool(true), "contextSaveReq")
-    StreamMonitor(frontend.io.contextLoadRsp, Bool(true), "contextLoadRsp")
-    StreamMonitor(frontend.io.contextSaveRsp, Bool(true), "contextSaveRsp")
+    StreamMonitor(frontend.io.workUnits, yes, s"$i workUnits")
+    StreamMonitor(frontend.io.contextLoadReq, yes, s"$i contextLoadReq")
+    StreamMonitor(frontend.io.contextSaveReq, yes, s"$i contextSaveReq")
+    StreamMonitor(frontend.io.contextLoadRsp, yes, s"$i contextLoadRsp")
+    StreamMonitor(frontend.io.contextSaveRsp, yes, s"$i contextSaveRsp")
     */
+    /*
+    for(mp <- 0 until pSeyrek.portsPerPE) {
+      StreamMonitor(backend.io.mainMem(mp).memRdReq, yes, s"$i memRdReq $mp")
+      StreamMonitor(backend.io.mainMem(mp).memRdRsp, yes, s"$i memRdRsp $mp")
+      StreamMonitor(backend.io.mainMem(mp).memWrReq, yes, s"$i memWrReq $mp")
+      StreamMonitor(backend.io.mainMem(mp).memWrRsp, yes, s"$i memWrRsp $mp")
+    }
+    */
+
   }
 
   // TODO expose more detailed status and statistics

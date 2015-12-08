@@ -8,6 +8,7 @@ import TidbitsSimUtils._
 import TidbitsAXI._
 import TidbitsDMA._
 import TidbitsPlatformWrapper._
+import TidbitsMath._
 
 object ChannelConfigs {
   val twoPort = Map(
@@ -15,7 +16,7 @@ object ChannelConfigs {
     "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem" -> ReadChanParams(maxReadTxns = 8, port = 1)
+    "ctxmem" -> ReadChanParams(maxReadTxns = 16, port = 1)
   )
   val onePort = Map(
     "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
@@ -52,11 +53,37 @@ class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val makeScheduler = { () => new InOrderScheduler(this) }
 }
 
-class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
-  val accelName = "UInt64ExtSpMV"
+class UInt64BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val accelName = "UInt64BRAM"
   val numPEs = 1
   val portsPerPE = 1
   val chanConfig = ChannelConfigs.onePort
+  val indWidth = 32
+  val valWidth = 64
+  val mrp = p.toMemReqParams()
+  val makeContextMemory = { r: ReadChanParams =>
+    new BRAMContextMem(new BRAMContextMemParams(
+      depth = 1024, readLatency = 1, writeLatency = 1, chanID = r.chanBaseID ,
+      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
+    ))
+  }
+
+  val makeSemiringAdd = { () =>
+    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
+  }
+
+  val makeSemiringMul = { () =>
+    new SystolicSInt64Mul_5Stage()
+  }
+  val issueWindow = 16
+  val makeScheduler = { () => new InOrderScheduler(this) }
+}
+
+class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val accelName = "UInt64ExtSpMV"
+  val numPEs = 1
+  val portsPerPE = 2
+  val chanConfig = ChannelConfigs.twoPort
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
@@ -72,10 +99,10 @@ class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   }
 
   val makeSemiringMul = { () =>
-    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a*b})
+    new SystolicSInt64Mul_5Stage()
   }
-  val issueWindow = 4
-  val makeScheduler = { () => new InOrderScheduler(this) }
+  val issueWindow = 32
+  val makeScheduler = { () => new OoOComplScheduler(this) }
 }
 
 object SeyrekMainObj {
@@ -86,7 +113,8 @@ object SeyrekMainObj {
 
   val accelMap: AccelMap  = Map(
     "UInt32BRAM" -> {p => new SpMVAccel(p, new UInt32BRAMSpMVParams(p))},
-    "UInt64Ext" -> {p => new SpMVAccel(p, new UInt64ExtSpMVParams(p))}
+    "UInt64Ext" -> {p => new SpMVAccel(p, new UInt64ExtSpMVParams(p))},
+    "UInt64BRAM" -> {p => new SpMVAccel(p, new UInt64BRAMSpMVParams(p))}
   )
 
   val platformMap: PlatformMap = Map(
