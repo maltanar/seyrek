@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <string>
+#include <iostream>
+using namespace std;
 
 #include "cscspmv.hpp"
 #include "wrapperregdriver.h"
@@ -139,8 +141,10 @@ public:
     }
   }
 
-  virtual void setOutstandingTxns(unsigned char txns) {
+  virtual void setOutstandingTxns(unsigned int txns) {
     // TODO txns should be verified against the hardware capabilities!
+    if(txns > 16 || txns == 0)
+      throw "The HW probably doesn't support that many transactions";
     set_ctx_txns(txns);
     execAccelMode(START_CONFIG);
   }
