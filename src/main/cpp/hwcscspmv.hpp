@@ -139,7 +139,11 @@ public:
     }
   }
 
-  void set_ctx_txns(AccelReg value) {writeReg(offsCtxTxns, value);}
+  virtual void setOutstandingTxns(unsigned char txns) {
+    // TODO txns should be verified against the hardware capabilities!
+    set_ctx_txns(txns);
+    execAccelMode(START_CONFIG);
+  }
 
 protected:
   // statistics
@@ -194,6 +198,7 @@ protected:
   void set_csc_cols(AccelReg value) {writeReg(offsCols, value);}
   void set_csc_nz(AccelReg value) {writeReg(offsNZ, value);}
   AccelReg get_cycle_count() {return readReg(offsCycleCount);}
+  void set_ctx_txns(AccelReg value) {writeReg(offsCtxTxns, value);}
 
 
   // accelerator-side versions of SpMV data

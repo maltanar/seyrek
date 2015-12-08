@@ -132,4 +132,5 @@ object SeyrekModes {
   val START_REGULAR = UInt(0, 10)
   val START_INIT = UInt(1, 10)
   val START_FLUSH = UInt(2, 10)
+  val START_CONFIG = UInt(3, 10)
 }
