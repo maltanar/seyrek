@@ -59,28 +59,41 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   contextmem.io.mainMem.memWrDat <> io.mainMem(ctxMemPort).memWrDat
   io.mainMem(ctxMemPort).memWrRsp <> contextmem.io.mainMem.memWrRsp
 
+// - if the platform does not return same ID reqs in-order, we need a read
+//   order cache. in this case throttling is not necessary, since the #
+//   of outstanding reqs naturally throttles the StreamReader.
+  val needReadOrder: Boolean = !p.mrp.sameIDInOrder
+
   // instantiate StreamReaders for fetching the sequential SpMV streams
   // these will be feeding the frontend with data
   val readColPtr = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.indWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
+    disableThrottle = needReadOrder, readOrderCache = needReadOrder,
+    readOrderTxns = memsys.getChanParams("colptr").maxReadTxns,
     chanID = memsys.getChanParams("colptr").chanBaseID
   )))
   memsys.connectChanReqRsp("colptr", readColPtr.io.req, readColPtr.io.rsp)
 
   val readRowInd = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.indWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
+    disableThrottle = needReadOrder, readOrderCache = needReadOrder,
+    readOrderTxns = memsys.getChanParams("rowind").maxReadTxns,
     chanID = memsys.getChanParams("rowind").chanBaseID
   )))
   memsys.connectChanReqRsp("rowind", readRowInd.io.req, readRowInd.io.rsp)
 
   val readNZData = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.valWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
+    disableThrottle = needReadOrder, readOrderCache = needReadOrder,
+    readOrderTxns = memsys.getChanParams("nzdata").maxReadTxns,
     chanID = memsys.getChanParams("nzdata").chanBaseID
   )))
   memsys.connectChanReqRsp("nzdata", readNZData.io.req, readNZData.io.rsp)
 
   val readInpVec = Module(new StreamReader(new StreamReaderParams(
     streamWidth = p.valWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
+    disableThrottle = needReadOrder, readOrderCache = needReadOrder,
+    readOrderTxns = memsys.getChanParams("inpvec").maxReadTxns,
     chanID = memsys.getChanParams("inpvec").chanBaseID
   )))
   memsys.connectChanReqRsp("inpvec", readInpVec.io.req, readInpVec.io.rsp)
