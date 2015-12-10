@@ -11,19 +11,29 @@ import TidbitsPlatformWrapper._
 import TidbitsMath._
 
 object ChannelConfigs {
+  val threePort = Map(
+    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 1),
+    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 1),
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 2),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 0)
+  )
   val twoPort = Map(
     "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
     "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem" -> ReadChanParams(maxReadTxns = 16, port = 1)
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 1),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 1)
   )
   val onePort = Map(
     "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
     "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem" -> ReadChanParams(maxReadTxns = 8, port = 0)
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 8, port = 0),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 8, port = 0)
   )
 }
 
@@ -82,8 +92,8 @@ class UInt64BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "UInt64ExtSpMV"
   val numPEs = 1
-  val portsPerPE = 2
-  val chanConfig = ChannelConfigs.twoPort
+  val portsPerPE = 3
+  val chanConfig = ChannelConfigs.threePort
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()

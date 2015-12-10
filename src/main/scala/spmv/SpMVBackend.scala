@@ -39,7 +39,7 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   // instantiate the context memory
   val contextmem = Module(
     // channel ID base is passed as argument to ctx.mem. constructor
-    p.makeContextMemory(memsys.getChanParams("ctxmem"))
+    p.makeContextMemory(memsys.getChanParams("ctxmem-r"))
   )
   contextmem.io.contextReqCnt := io.contextReqCnt
   contextmem.io.start := io.start
@@ -49,12 +49,11 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   contextmem.io.contextLoadRsp <> io.contextLoadRsp
   io.contextSaveReq <> contextmem.io.contextSaveReq
   contextmem.io.contextSaveRsp <> io.contextSaveRsp
-  memsys.connectChanReqRsp("ctxmem", contextmem.io.mainMem.memRdReq,
+  memsys.connectChanReqRsp("ctxmem-r", contextmem.io.mainMem.memRdReq,
     contextmem.io.mainMem.memRdRsp
   )
-  // put the context mem write channel onto the same port as the read
   // TODO write port sharing? this is the only write so far
-  val ctxMemPort = memsys.getChanParams("ctxmem").port
+  val ctxMemPort = memsys.getChanParams("ctxmem-w").port
   contextmem.io.mainMem.memWrReq <> io.mainMem(ctxMemPort).memWrReq
   contextmem.io.mainMem.memWrDat <> io.mainMem(ctxMemPort).memWrDat
   io.mainMem(ctxMemPort).memWrRsp <> contextmem.io.mainMem.memWrRsp
