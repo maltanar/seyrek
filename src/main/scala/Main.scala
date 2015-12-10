@@ -11,6 +11,14 @@ import TidbitsPlatformWrapper._
 import TidbitsMath._
 
 object ChannelConfigs {
+  val fourPort = Map(
+    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 1),
+    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 2),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 3)
+  )
   val threePort = Map(
     "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
     "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
@@ -92,8 +100,8 @@ class UInt64BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "UInt64ExtSpMV"
   val numPEs = 1
-  val portsPerPE = 3
-  val chanConfig = ChannelConfigs.threePort
+  val portsPerPE = 4
+  val chanConfig = ChannelConfigs.fourPort
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
