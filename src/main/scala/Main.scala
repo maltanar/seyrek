@@ -124,7 +124,7 @@ class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 }
 
 object SeyrekMainObj {
-  type AccelInstFxn = PlatformWrapperParams => GenericAccelerator
+  type AccelInstFxn = PlatformWrapperParams => SpMVAccel
   type AccelMap = Map[String, AccelInstFxn]
   type PlatformInstFxn = AccelInstFxn => PlatformWrapper
   type PlatformMap = Map[String, PlatformInstFxn]
@@ -169,6 +169,7 @@ object SeyrekMainObj {
     chiselMain(chiselArgs, () => Module(platformInst(accInst)))
     // build driver
     platformInst(accInst).generateRegDriver("emulator/")
+    accInst(TesterWrapperParams).generatePerfCtrMapCode("emulator/")
     // copy emulator driver and SW support files
     val regDrvRoot = "src/main/scala/fpga-tidbits/platform-wrapper/regdriver/"
     val files = Array("wrapperregdriver.h", "platform-tester.cpp",
@@ -190,6 +191,7 @@ object SeyrekMainObj {
     val platformInst = platformMap(platformName)
 
     platformInst(accInst).generateRegDriver(".")
+    accInst(TesterWrapperParams).generatePerfCtrMapCode(".")
   }
 
   def showHelp() = {
