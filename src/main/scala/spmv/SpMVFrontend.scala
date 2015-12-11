@@ -13,6 +13,8 @@ class SpMVFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val contextLoadRsp = Decoupled(p.wu).flip
   val contextSaveReq = Decoupled(p.vi)
   val contextSaveRsp = Decoupled(p.i).flip
+  // statistics
+  val hazardStallCycles = UInt(OUTPUT, 32)
 }
 
 class SpMVFrontend(p: SeyrekParams) extends Module {
@@ -21,6 +23,8 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   val mul = Module(new ContextfulSemiringOp(p, p.makeSemiringMul)).io
   val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
   val sched = Module(p.makeScheduler())
+
+  io.hazardStallCycles := sched.io.hazardStallCycles
 
   // TODO do we really need queues at every step, and how big?
 
@@ -43,7 +47,7 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   // [save context] -> i -> [scheduler]
   FPGAQueue(io.contextSaveRsp, 2) <> sched.io.compl
 
-  // completion logic
+  // completion logic and statistics
   io.finished := Bool(false)
   val regCompletedOps = Reg(init = UInt(0, 32))
 
@@ -71,6 +75,4 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
         when (!io.start) {regState := sIdle}
       }
   }
-
-  // TODO add statistics
 }

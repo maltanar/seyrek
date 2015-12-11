@@ -32,4 +32,13 @@ class InOrderScheduler(p: SeyrekParams) extends Scheduler(p) {
   // since we assume in-order completion, we don't do any value checking
   inFlight.deq.ready := io.compl.valid
   io.compl.ready := inFlight.deq.valid
+
+  // hazard counting logic
+  val regHazardStalls = Reg(init = UInt(0, 32))
+  val regStart = Reg(next = io.start)
+  when(!regStart & io.start) { regHazardStalls := UInt(0)}
+  .elsewhen(regStart & inFlight.hazard) {
+    regHazardStalls := regHazardStalls + UInt(1)
+  }
+  io.hazardStallCycles := regHazardStalls
 }
