@@ -29,9 +29,24 @@ int main(int argc, char *argv[])
   typedef ParallelHWSpMV<SpMVInd, SpMVVal> ParSpMV;
 
   try {
+    string matrixName;
+    cout << "Enter matrix name: " << endl;
+    cin >> matrixName;
 
-    SparseMatrix * A = SparseMatrix::load("circuit204-int64");
-    //SparseMatrix * A = SparseMatrix::eye(1024);
+    SparseMatrix * A;
+    unsigned int dim = 0;
+    if (matrixName == "eye") {
+      cout << "Enter dimension for identity matrix: " << endl;
+      cin >> dim;
+      A = SparseMatrix::eye(dim);
+    } else if (matrixName == "dense") {
+      cout << "Enter dimension for dense matrix: " << endl;
+      cin >> dim;
+      A = SparseMatrix::dense(dim);
+    } else
+      A = SparseMatrix::load(matrixName);
+
+    A->printSummary();
     SpMVVal * x = new SpMVVal[A->getCols()];
     SpMVVal * y = new SpMVVal[A->getRows()];
     for(int i = 0; i < A->getRows(); i++) {
