@@ -25,6 +25,7 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   val sched = Module(p.makeScheduler())
 
   io.hazardStallCycles := sched.io.hazardStallCycles
+  sched.io.start := io.start
 
   // TODO do we really need queues at every step, and how big?
 
