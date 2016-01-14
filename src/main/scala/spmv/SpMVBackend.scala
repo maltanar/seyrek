@@ -23,6 +23,13 @@ class SpMVBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val contextSaveRsp = Decoupled(p.i)
   // memory ports
   val mainMem = Vec.fill(p.portsPerPE) {new GenericMemoryMasterPort(p.mrp)}
+  // debug - stat
+  /*
+  val monCP = new StreamMonitorOutIF()
+  val monRI = new StreamMonitorOutIF()
+  val monNZ = new StreamMonitorOutIF()
+  val monIV = new StreamMonitorOutIF()
+  */
 }
 
 class SpMVBackend(p: SeyrekParams) extends Module {
@@ -69,7 +76,8 @@ class SpMVBackend(p: SeyrekParams) extends Module {
     streamWidth = p.indWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
     disableThrottle = needReadOrder, readOrderCache = needReadOrder,
     readOrderTxns = memsys.getChanParams("colptr").maxReadTxns,
-    chanID = memsys.getChanParams("colptr").chanBaseID
+    chanID = memsys.getChanParams("colptr").chanBaseID,
+    streamName = "colptr"
   )))
   memsys.connectChanReqRsp("colptr", readColPtr.io.req, readColPtr.io.rsp)
 
@@ -77,7 +85,8 @@ class SpMVBackend(p: SeyrekParams) extends Module {
     streamWidth = p.indWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
     disableThrottle = needReadOrder, readOrderCache = needReadOrder,
     readOrderTxns = memsys.getChanParams("rowind").maxReadTxns,
-    chanID = memsys.getChanParams("rowind").chanBaseID
+    chanID = memsys.getChanParams("rowind").chanBaseID,
+    streamName = "rowind"
   )))
   memsys.connectChanReqRsp("rowind", readRowInd.io.req, readRowInd.io.rsp)
 
@@ -85,7 +94,8 @@ class SpMVBackend(p: SeyrekParams) extends Module {
     streamWidth = p.valWidth, fifoElems = 256, mem = p.mrp, maxBeats = 8,
     disableThrottle = needReadOrder, readOrderCache = needReadOrder,
     readOrderTxns = memsys.getChanParams("nzdata").maxReadTxns,
-    chanID = memsys.getChanParams("nzdata").chanBaseID
+    chanID = memsys.getChanParams("nzdata").chanBaseID,
+    streamName = "nzdata"
   )))
   memsys.connectChanReqRsp("nzdata", readNZData.io.req, readNZData.io.rsp)
 
@@ -93,7 +103,8 @@ class SpMVBackend(p: SeyrekParams) extends Module {
     streamWidth = p.valWidth, fifoElems = 128, mem = p.mrp, maxBeats = 8,
     disableThrottle = needReadOrder, readOrderCache = needReadOrder,
     readOrderTxns = memsys.getChanParams("inpvec").maxReadTxns,
-    chanID = memsys.getChanParams("inpvec").chanBaseID
+    chanID = memsys.getChanParams("inpvec").chanBaseID,
+    streamName = "inpvec"
   )))
   memsys.connectChanReqRsp("inpvec", readInpVec.io.req, readInpVec.io.rsp)
 
@@ -139,4 +150,14 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   } .otherwise {
     io.finished := contextmem.io.finished
   }
+
+  // uncomment to enable performance monitors on backend channels
+  /*
+  val enMon = !io.finished & startRegular
+
+  io.monCP := StreamMonitor(readColPtr.io.out, enMon)
+  io.monRI := StreamMonitor(readRowInd.io.out, enMon)
+  io.monNZ := StreamMonitor(readNZData.io.out, enMon)
+  io.monIV := StreamMonitor(readInpVec.io.out, enMon)
+  */
 }
