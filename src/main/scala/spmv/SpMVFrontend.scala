@@ -30,7 +30,7 @@ class SpMVFrontend(p: SeyrekParams) extends Module {
   // TODO do we really need queues at every step, and how big?
 
   // (v, v, i) -> [queue] -> [mul] -> (n = v*v, i)
-  FPGAQueue(io.workUnits, 2) <> mul.in
+  FPGAQueue(io.workUnits, 8) <> mul.in  // why'd 2 and 4 cause frontend stalls?
 
   // (n, i) -> [queue] -> [scheduler]
   FPGAQueue(mul.out, 2) <> sched.io.instr
