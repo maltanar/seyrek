@@ -17,6 +17,24 @@ class SpMVFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val hazardStallCycles = UInt(OUTPUT, 32)
 }
 
+// "dummy" frontend that only consumes the generated work units and asserts
+// finished when enough WUs have been sent.
+// useful for (performance) debugging the backend, removing all frontend effs.
+class SpMVDummyFrontend(p: SeyrekParams) extends Module {
+  val io = new SpMVFrontendIO(p)
+
+  io.hazardStallCycles := UInt(0)
+  io.workUnits.ready := Bool(true)
+  io.contextLoadReq.valid := Bool(false)
+  io.contextSaveReq.valid := Bool(false)
+  val regWUCounter = Reg(init = UInt(0, 32))
+  when(io.workUnits.ready & io.workUnits.valid) {
+    regWUCounter := regWUCounter + UInt(1)
+  }
+  io.finished := Mux(io.mode === SeyrekModes.START_REGULAR & io.start,
+    regWUCounter === io.csc.nz, Reg(next=io.start))
+}
+
 class SpMVFrontend(p: SeyrekParams) extends Module {
   val io = new SpMVFrontendIO(p)
 
