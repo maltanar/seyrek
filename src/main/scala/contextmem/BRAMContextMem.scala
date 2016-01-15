@@ -140,7 +140,7 @@ class BRAMWrapper(p: BRAMContextMemParams) extends Module {
 
   // connect read port to load request-response queues
   val readRspQ = Module(new FPGAQueue(io.contextLoadRsp.bits, p.readLatency+2)).io
-  val canDoRead = (readRspQ.count < UInt(p.readLatency))
+  val canDoRead = (readRspQ.count < UInt(2))
   val doRead = canDoRead & io.contextLoadReq.valid
 
   io.contextLoadReq.ready := canDoRead
@@ -160,7 +160,7 @@ class BRAMWrapper(p: BRAMContextMemParams) extends Module {
 
   // connect the write port to save request-response queues
   val writeRspQ = Module(new FPGAQueue(io.contextSaveRsp.bits, p.writeLatency+2)).io
-  val canDoWrite = (writeRspQ.count < UInt(p.writeLatency))
+  val canDoWrite = (writeRspQ.count < UInt(2))
   val doWrite = canDoWrite & io.contextSaveReq.valid
 
   io.contextSaveReq.ready := canDoWrite

@@ -1,6 +1,7 @@
 #ifndef HWCSCSPMV_HPP
 #define HWCSCSPMV_HPP
 
+#include <map>
 #include <vector>
 #include <string>
 #include <iostream>
@@ -12,7 +13,7 @@ using namespace std;
 #include "seyrekconsts.hpp"
 
 // number of registers per SpMV PE
-#define HWSPMVPE_REGS   18
+#define HWSPMVPE_REGS   19
 
 // TODO better control of acc-host buffer duplication in sw drivers --
 // right now there are two copies of all (host+accel) and coherency mvs.
@@ -22,7 +23,6 @@ template <class SpMVInd, class SpMVVal>
 class HWSpMV : public virtual CSCSpMV<SpMVInd, SpMVVal>, public AddMulSemiring<SpMVInd, SpMVVal> {
 public:
   HWSpMV(WrapperRegDriver * driver, unsigned int peNum = 0, const char * attachName = 0) {
-    m_cyclesRegular = 0;
     m_attachName = attachName;
     m_platform = driver;
     m_acc_indPtrs = 0;
@@ -36,6 +36,10 @@ public:
     m_xSize = 0;
     m_ySize = 0;
     m_peNum = peNum;
+    m_perfCtrIndMap = getPerfCtrMap();
+    for(map<string,unsigned int>::iterator it = m_perfCtrIndMap.begin(); it != m_perfCtrIndMap.end(); ++it) {
+      m_perfCtrKeys.push_back(it->first);
+    }
     if(attachName != 0)
       m_platform->attach(attachName);
   }
@@ -109,14 +113,16 @@ public:
 
   // TODO expose proper stats
   virtual unsigned int statInt(std::string name) {
-    if(name == "cyclesRegular") return m_cyclesRegular;
-	else return 0;
+    return m_perfCtrValMap[name];
   }
 
   virtual std::vector<std::string> statKeys() {
-    std::vector<std::string> keys;
-    keys.push_back("cyclesRegular");
-    return keys;
+    return m_perfCtrKeys;
+  }
+
+  void printAllStats() {
+    for(int i = 0; i < m_perfCtrKeys.size(); i++)
+      cout << m_perfCtrKeys[i] << " = " << m_perfCtrValMap[m_perfCtrKeys[i]] << endl;
   }
 
   // HWSpMV-specific functions
@@ -135,7 +141,7 @@ public:
     if(start) set_start(1);
     else {
       if(mode == START_REGULAR) {
-        m_cyclesRegular = get_cycle_count();
+        updateAllPerfCtrs();
       }
       set_start(0);
     }
@@ -150,9 +156,6 @@ public:
   }
 
 protected:
-  // statistics
-  unsigned int m_cyclesRegular;
-
   // matrix data
   using CSCSpMV<SpMVInd, SpMVVal>::m_A;
   using CSCSpMV<SpMVInd, SpMVVal>::m_y;
@@ -182,8 +185,9 @@ protected:
     offsRows        = 14,
     offsCols        = 15,
     offsNZ          = 16,
-    offsCycleCount  = 17,
-    offsCtxTxns		= 18
+    offsCtxTxns	    = 17,
+    offsCtrSel      = 18,
+    offsCtrVal      = 19
   } HWSpMVReg;
   // readReg and writeReg use peNum to add a base offset to the desired register ID
   AccelReg readReg(HWSpMVReg reg) {return m_platform->readReg(m_peNum * HWSPMVPE_REGS + reg);}
@@ -201,9 +205,9 @@ protected:
   void set_csc_rows(AccelReg value) {writeReg(offsRows, value);}
   void set_csc_cols(AccelReg value) {writeReg(offsCols, value);}
   void set_csc_nz(AccelReg value) {writeReg(offsNZ, value);}
-  AccelReg get_cycle_count() {return readReg(offsCycleCount);}
   void set_ctx_txns(AccelReg value) {writeReg(offsCtxTxns, value);}
-
+  void set_perfCtrSel(AccelReg value) {writeReg(offsCtrSel, value);}
+  AccelReg get_perfCtrVal() {return readReg(offsCtrVal);}
 
   // accelerator-side versions of SpMV data
   SpMVInd * m_acc_indPtrs;
@@ -224,9 +228,26 @@ protected:
     // TODO add timeout option here?
     while(get_finished() != 1);
     if(mode == START_REGULAR) {
-      m_cyclesRegular = get_cycle_count();
+      updateAllPerfCtrs();
     }
     set_start(0);
+  }
+
+  // performance counter access
+#include "perfctr.hpp"  // generated as part of driver
+  map<string, unsigned int> m_perfCtrIndMap;
+  map<string, unsigned int> m_perfCtrValMap;
+  vector<string> m_perfCtrKeys;
+
+  void updatePerfCtr(string name) {
+    unsigned int ind = m_perfCtrIndMap[name];
+    set_perfCtrSel(ind);
+    m_perfCtrValMap[name] = get_perfCtrVal();
+  }
+
+  void updateAllPerfCtrs() {
+    for(int i = 0; i < m_perfCtrKeys.size(); i++)
+      updatePerfCtr(m_perfCtrKeys[i]);
   }
 
 };

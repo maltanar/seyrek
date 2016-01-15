@@ -9,7 +9,7 @@
 using namespace std;
 
 typedef unsigned int SpMVInd;
-typedef int SpMVVal;
+typedef int64_t SpMVVal;
 
 
 class RegSpMV: public AddMulSemiring<SpMVInd, SpMVVal>, public SWSpMV<SpMVInd, SpMVVal> {
@@ -29,8 +29,24 @@ int main(int argc, char *argv[])
   typedef ParallelHWSpMV<SpMVInd, SpMVVal> ParSpMV;
 
   try {
+    string matrixName;
+    cout << "Enter matrix name: " << endl;
+    cin >> matrixName;
 
-    SparseMatrix * A = SparseMatrix::load("circuit204-int");
+    SparseMatrix * A;
+    unsigned int dim = 0;
+    if (matrixName == "eye") {
+      cout << "Enter dimension for identity matrix: " << endl;
+      cin >> dim;
+      A = SparseMatrix::eye(dim);
+    } else if (matrixName == "dense") {
+      cout << "Enter dimension for dense matrix: " << endl;
+      cin >> dim;
+      A = SparseMatrix::dense(dim);
+    } else
+      A = SparseMatrix::load(matrixName);
+
+    A->printSummary();
     SpMVVal * x = new SpMVVal[A->getCols()];
     SpMVVal * y = new SpMVVal[A->getRows()];
     for(int i = 0; i < A->getRows(); i++) {
@@ -40,14 +56,24 @@ int main(int argc, char *argv[])
 
 
     WrapperRegDriver * platform = initPlatform();
-    ParSpMV * par = new ParSpMV(1, platform, "UInt32BRAMSpMV");
+    string attachname;
+    cout << "Enter attach name: " << endl;
+    cin >> attachname;
+
+    ParSpMV * par = new ParSpMV(1, platform, attachname.c_str());
+
+    cout << "Setting inputs..." << endl;
 
     par->setA(A);
     par->setx(x);
     par->sety(y);
 
+    cout << "Executing..." << endl;
+
 
     par->exec();
+
+    par->getPE(0)->printAllStats();
 
     cout << "Completed, checking result..." << endl;
 

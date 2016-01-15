@@ -23,6 +23,8 @@ class SchedulerIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   // completed instructions
   // (input from the reducer)
   val compl = Decoupled(p.i).flip
+  // statistics
+  val hazardStallCycles = UInt(OUTPUT, 32)
 }
 
 abstract class Scheduler(p: SeyrekParams) extends Module {

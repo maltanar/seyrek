@@ -28,4 +28,14 @@ class OoOComplScheduler(p: SeyrekParams) extends Scheduler(p) {
   forker.outB <> inFlight.in
 
   io.compl <> inFlight.rm
+
+  // hazard counting logic
+  val regHazardStalls = Reg(init = UInt(0, 32))
+  val regHazard = Reg(next = inFlight.hazard)
+  val regStart = Reg(next = io.start)
+  when(!regStart & io.start) { regHazardStalls := UInt(0)}
+  .elsewhen(regStart & regHazard) {
+    regHazardStalls := regHazardStalls + UInt(1)
+  }
+  io.hazardStallCycles := regHazardStalls
 }

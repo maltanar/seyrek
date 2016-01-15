@@ -96,6 +96,32 @@ public:
     return ret;
   }
 
+  static CSC * dense(unsigned int dim) {
+    CSC * ret = new CSC();
+    ret->m_metadata = new SparseMatrixMetadata;
+    ret->m_metadata->startingRow = 0;
+    ret->m_metadata->startingCol = 0;
+    ret->m_metadata->cols = dim;
+    ret->m_metadata->rows = dim;
+    ret->m_metadata->nz = dim*dim;
+    ret->m_indPtrs = new SpMVInd[dim+1];
+    ret->m_inds = new SpMVInd[dim*dim];
+    ret->m_nzData = new SpMVVal[dim*dim];
+
+    for(SpMVInd i = 0; i < dim; i++)
+      ret->m_indPtrs[i] = i*dim;
+    ret->m_indPtrs[dim] = dim*dim;
+
+    for(SpMVInd i = 0; i < dim*dim; i++) {
+        ret->m_inds[i] = i % dim;
+        ret->m_nzData[i] = i+1;
+    }
+
+    ret->setName("dense");
+
+    return ret;
+  }
+
   unsigned int getCols() const {
     return m_metadata->cols;
   }

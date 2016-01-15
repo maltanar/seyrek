@@ -11,19 +11,46 @@ import TidbitsPlatformWrapper._
 import TidbitsMath._
 
 object ChannelConfigs {
+  val fourPortBRAM = Map(
+    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 1),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 2),
+    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 3),
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 0),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 0)
+  )
+
+  val fourPort = Map(
+    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 1),
+    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 2),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 3)
+  )
+  val threePort = Map(
+    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 1),
+    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 1),
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 2),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 0)
+  )
   val twoPort = Map(
     "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
     "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem" -> ReadChanParams(maxReadTxns = 16, port = 1)
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 1),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 1)
   )
   val onePort = Map(
     "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
     "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
     "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem" -> ReadChanParams(maxReadTxns = 8, port = 0)
+    "ctxmem-r" -> ReadChanParams(maxReadTxns = 8, port = 0),
+    "ctxmem-w" -> ReadChanParams(maxReadTxns = 8, port = 0)
   )
 }
 
@@ -56,8 +83,8 @@ class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 class UInt64BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "UInt64BRAM"
   val numPEs = 1
-  val portsPerPE = 1
-  val chanConfig = ChannelConfigs.onePort
+  val portsPerPE = 4
+  val chanConfig = ChannelConfigs.fourPortBRAM
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
@@ -82,8 +109,8 @@ class UInt64BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "UInt64ExtSpMV"
   val numPEs = 1
-  val portsPerPE = 2
-  val chanConfig = ChannelConfigs.twoPort
+  val portsPerPE = 4
+  val chanConfig = ChannelConfigs.fourPort
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
@@ -106,7 +133,7 @@ class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
 }
 
 object SeyrekMainObj {
-  type AccelInstFxn = PlatformWrapperParams => GenericAccelerator
+  type AccelInstFxn = PlatformWrapperParams => SpMVAccel
   type AccelMap = Map[String, AccelInstFxn]
   type PlatformInstFxn = AccelInstFxn => PlatformWrapper
   type PlatformMap = Map[String, PlatformInstFxn]
@@ -151,6 +178,7 @@ object SeyrekMainObj {
     chiselMain(chiselArgs, () => Module(platformInst(accInst)))
     // build driver
     platformInst(accInst).generateRegDriver("emulator/")
+    accInst(TesterWrapperParams).generatePerfCtrMapCode("emulator/")
     // copy emulator driver and SW support files
     val regDrvRoot = "src/main/scala/fpga-tidbits/platform-wrapper/regdriver/"
     val files = Array("wrapperregdriver.h", "platform-tester.cpp",
@@ -172,6 +200,7 @@ object SeyrekMainObj {
     val platformInst = platformMap(platformName)
 
     platformInst(accInst).generateRegDriver(".")
+    accInst(TesterWrapperParams).generatePerfCtrMapCode(".")
   }
 
   def showHelp() = {

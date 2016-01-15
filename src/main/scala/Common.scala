@@ -100,7 +100,9 @@ extends Module {
   } else {
     // queue should have at least two elements to guarantee full throughout
     // could use smaller sizes with pipe/flow, but this gives better timing
-    val qCap = if(opInst.latency < 2) 2 else opInst.latency
+    // WEIRD: observed throughput issues without the constant +2, so keeping
+    // it like this for the time being
+    val qCap = opInst.latency + 2
     val indQ = Module(new FPGAQueue(p.i, qCap)).io
     forker.outB <> indQ.enq
     indQ.deq <> joiner.inB
