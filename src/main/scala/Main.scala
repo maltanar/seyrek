@@ -212,6 +212,8 @@ object SeyrekMainObj {
   }
 
   def main(args: Array[String]): Unit = {
+    val p = new UInt32BRAMSpMVParams(TesterWrapperParams)
+    chiselMain(Array("--v"), () => Module(new RowMajorReducer(p)))
     if (args.size != 3) {
       showHelp()
       return

@@ -31,6 +31,7 @@ trait SeyrekParams {
   def wu = new WorkUnit(valWidth, indWidth) // (value, value, index)
   def vi = new ValIndPair(valWidth, indWidth) // (value, index)
   def vv = new BinaryMathOperands(valWidth) // (value, value)
+  def ii = new IndIndPair(indWidth) // (index, index)
   // channel-to-port mapping
    def chanConfig: Map[String, ReadChanParams]
 }
@@ -51,6 +52,13 @@ object WorkUnit {
     workUnit.rowInd := i
     workUnit
   }
+}
+
+class IndIndPair(indWidth: Int) extends Bundle {
+  val indA = UInt(width = indWidth)
+  val indB = UInt(width = indWidth)
+
+  override def cloneType: this.type = new IndIndPair(indWidth).asInstanceOf[this.type]
 }
 
 class ValIndPair(valWidth: Int, indWidth: Int) extends Bundle {
