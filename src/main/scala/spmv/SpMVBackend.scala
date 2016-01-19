@@ -4,11 +4,6 @@ import Chisel._
 import TidbitsDMA._
 import TidbitsStreams._
 
-// TODOs for SpMVBackend:
-// - instantiate and connect ContextMemory (BRAM, cache, DRAM)
-// - add init and flush modes (for ContextMemory)
-// - full system testing
-
 class SpMVBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csc = new CSCSpMV(p).asInput
   // output to frontend
@@ -65,9 +60,9 @@ class SpMVBackend(p: SeyrekParams) extends Module {
   contextmem.io.mainMem.memWrDat <> io.mainMem(ctxMemPort).memWrDat
   io.mainMem(ctxMemPort).memWrRsp <> contextmem.io.mainMem.memWrRsp
 
-// - if the platform does not return same ID reqs in-order, we need a read
-//   order cache. in this case throttling is not necessary, since the #
-//   of outstanding reqs naturally throttles the StreamReader.
+  // - if the platform does not return same ID reqs in-order, we need a read
+  //   order cache. in this case throttling is not necessary, since the #
+  //   of outstanding reqs naturally throttles the StreamReader.
   val needReadOrder: Boolean = !p.mrp.sameIDInOrder
 
   // instantiate StreamReaders for fetching the sequential SpMV streams

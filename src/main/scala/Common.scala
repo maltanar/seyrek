@@ -61,6 +61,15 @@ class IndIndPair(indWidth: Int) extends Bundle {
   override def cloneType: this.type = new IndIndPair(indWidth).asInstanceOf[this.type]
 }
 
+object IndIndPair {
+  def apply(ia: UInt, ib: UInt): IndIndPair = {
+    val iip = new IndIndPair(ia.getWidth())
+    iip.indA := ia
+    iip.indB := ib
+    iip
+  }
+}
+
 class ValIndPair(valWidth: Int, indWidth: Int) extends Bundle {
   val value = UInt(width = valWidth)
   val ind = UInt(width = indWidth)
@@ -122,6 +131,18 @@ extends Module {
 class CSCSpMV(p: SeyrekParams) extends Bundle {
   val colPtr = UInt(width = p.ptrWidth)
   val rowInd = UInt(width = p.ptrWidth)
+  val nzData = UInt(width = p.ptrWidth)
+  val inpVec = UInt(width = p.ptrWidth)
+  val outVec = UInt(width = p.ptrWidth)
+
+  val rows = UInt(width = p.indWidth)
+  val cols = UInt(width = p.indWidth)
+  val nz = UInt(width = p.indWidth)
+}
+
+class CSRSpMV(p: SeyrekParams) extends Bundle {
+  val rowPtr = UInt(width = p.ptrWidth)
+  val colInd = UInt(width = p.ptrWidth)
   val nzData = UInt(width = p.ptrWidth)
   val inpVec = UInt(width = p.ptrWidth)
   val outVec = UInt(width = p.ptrWidth)

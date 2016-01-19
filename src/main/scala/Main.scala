@@ -52,6 +52,37 @@ object ChannelConfigs {
     "ctxmem-r" -> ReadChanParams(maxReadTxns = 8, port = 0),
     "ctxmem-w" -> ReadChanParams(maxReadTxns = 8, port = 0)
   )
+  val csrTest = Map(
+    "ptrs" -> ReadChanParams(maxReadTxns = 2, port = 0),
+    "inds" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0)
+  )
+}
+
+class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val accelName = "CSRTest"
+  val numPEs = 1
+  val portsPerPE = 1
+  val chanConfig = ChannelConfigs.csrTest
+  val indWidth = 32
+  val valWidth = 64
+  val mrp = p.toMemReqParams()
+  val makeContextMemory = { r: ReadChanParams =>
+    new BRAMContextMem(new BRAMContextMemParams(
+      depth = 1024, readLatency = 1, writeLatency = 1, chanID = r.chanBaseID ,
+      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
+    ))
+  }
+
+  val makeSemiringAdd = { () =>
+    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
+  }
+
+  val makeSemiringMul = { () =>
+    new SystolicSInt64Mul_5Stage()
+  }
+  val issueWindow = 4
+  val makeScheduler = { () => new InOrderScheduler(this) }
 }
 
 class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
@@ -212,8 +243,8 @@ object SeyrekMainObj {
   }
 
   def main(args: Array[String]): Unit = {
-    val p = new UInt32BRAMSpMVParams(TesterWrapperParams)
-    chiselMain(Array("--v"), () => Module(new RowMajorReducer(p)))
+    val p = new CSRTestParams(TesterWrapperParams)
+    chiselMain(Array("--v"), () => Module(new RowMajorBackend(p)))
     if (args.size != 3) {
       showHelp()
       return

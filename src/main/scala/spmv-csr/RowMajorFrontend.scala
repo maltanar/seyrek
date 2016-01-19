@@ -1,11 +1,3 @@
- // TODO
- // scheduler
- // zero-length rows -> emit zero result
- // one-length rows -> emit incoming operand as result
- // completion
- // queues and mux/demux
- // adder inst
-
 package Seyrek
 
 import Chisel._
@@ -19,12 +11,12 @@ class RowMajorFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val rows = UInt(INPUT, width = p.indWidth)
   // pointer to base of output vector
   val outVec = UInt(INPUT, width = p.indWidth)
-  // length of each row. indA = row number, indB = num nonzeroes in row
-  val rowLen = Decoupled(p.ii).flip
+  // length of each row, in-order
+  val rowLen = Decoupled(p.i).flip
   // work units to the reducer
   val workUnits = Decoupled(p.wu).flip
-  // memory access
-  val mainMem = new GenericMemoryMasterPort(p.mrp)
+  // results, row-value pairs
+  val results = Decoupled(p.vi)
 }
 
 class RowMajorFrontend(p: SeyrekParams) extends Module {
@@ -32,9 +24,7 @@ class RowMajorFrontend(p: SeyrekParams) extends Module {
 
   // instantiate the semiring multiply op and the reducer
   val mul = Module(new ContextfulSemiringOp(p, p.makeSemiringMul)).io
-  // TODO parametrize creation of reducer and result writer?
   val red = Module(new RowMajorReducer(p)).io
-  val resWriter = Module(new ResultWriterSimple(p)).io
 
   // (v, v, i) -> [queue] -> [mul] -> (n = v*v, i)
   FPGAQueue(io.workUnits, 2) <> mul.in
@@ -42,73 +32,17 @@ class RowMajorFrontend(p: SeyrekParams) extends Module {
   // feed mul results as operands to reducer
   FPGAQueue(mul.out, 2) <> red.operands
 
-  // pass row lengths directly to reducer
-  io.rowLen <> red.rowLen
+  // add row numbers to create the (rownumber, rowlength) input to reducer
+  val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
+  val rownums = NaturalNumbers(p.indWidth, startRegular, io.rows)
 
-  // give reducer results to result writer
-  red.results <> resWriter.results
+  StreamJoin(inA = rownums, inB = io.rowLen, genO = p.ii,
+    join = {(a: UInt, b: UInt) => IndIndPair(a,b) }
+  ) <> red.rowLen
 
-  // give the memory write port to the result writer
-  resWriter.memWrReq <> io.mainMem.memWrReq
-  resWriter.memWrDat <> io.mainMem.memWrDat
-  io.mainMem.memWrRsp <> resWriter.memWrRsp
-
-  // the only component with explicit start/finish in the frontend is
-  // the result writer; pass control I/O directly to that
-  resWriter.start := io.start
-  resWriter.mode := io.mode
-  io.finished := resWriter.finished
+  // push out results from reducer
+  red.results <> io.results
 }
-
-
-class RowMajorResultWriterIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
-  // number of rows in the matrix
-  val rows = UInt(INPUT, width = p.indWidth)
-  // pointer to base of output vector
-  val outVec = UInt(INPUT, width = p.indWidth)
-  // received results, row-value pairs
-  val results = Decoupled(p.vi).flip
-  // req - rsp interface for memory writes
-  val memWrReq = Decoupled(new GenericMemoryRequest(p.mrp))
-  val memWrDat = Decoupled(UInt(width = p.mrp.dataWidth))
-  val memWrRsp = Decoupled(new GenericMemoryResponse(p.mrp)).flip
-}
-
-// simple result writer; just send writes one and one to the memory system
-// no write combining, no bursts, val width must match mem sys data width
-class ResultWriterSimple(p: SeyrekParams) extends Module {
-  if(p.mrp.dataWidth != p.valWidth)
-  throw new Exception("ResultWriterSimple needs valWidth = mem dataWidth")
-
-  val io = new RowMajorResultWriterIO(p)
-  val startRegular = io.start & (io.mode === SeyrekModes.START_REGULAR)
-
-  val writeMemFork = Module(new StreamFork(
-    genIn = io.results.bits, genA = p.i, genB = p.v,
-    forkA = {x: ValIndPair => x.ind},
-    forkB = {x: ValIndPair => x.value}
-  )).io
-
-  io.results <> writeMemFork.in
-  // TODO make write channel ID parametrizable?
-  val wr = WriteArray(writeMemFork.outA, io.outVec, UInt(0), p.mrp)
-  wr <> io.memWrReq
-  writeMemFork.outB <> io.memWrDat
-
-  // count write completes to determine finished =============================
-
-  io.memWrRsp.ready := Bool(true) // always ready to accept write resps
-
-  val regCompletedRows = Reg(init = UInt(0, 32))
-  val regStart = Reg(next = startRegular)
-  when(!regStart & startRegular) {regCompletedRows := UInt(0)}
-  .elsewhen (io.memWrRsp.ready & io.memWrRsp.valid) {
-    regCompletedRows := regCompletedRows + UInt(1)
-  }
-
-  io.finished := Mux(startRegular, regCompletedRows === io.rows, Bool(true))
-}
-
 
 // note that the name "RowMajorFrontend" is a slight misnomer; the design will
 // support small deviations from row-major (needed to support out-of-order
