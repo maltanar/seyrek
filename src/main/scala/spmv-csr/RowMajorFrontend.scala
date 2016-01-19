@@ -56,6 +56,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
 
   // queues for holding operand + scheduler entry number
   val opQ = Vec.fill(p.issueWindow) {Module(new FPGAQueue(p.vi, opQDepth)).io}
+  val counts = Vec(opQ.map(x => x.count))
   // signals for controlling the enq/deq value
   val opQEnqSel = UInt(width = log2Up(p.issueWindow))
   val opQDeqSel = UInt(width = log2Up(p.issueWindow))
@@ -91,9 +92,10 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   sched.write_tag := io.rowLen.bits.indA
   sched.write := Bool(false)
 
-  when(sched.hasFree & io.rowLen.valid) {
+  when(io.rowLen.ready & io.rowLen.valid) {
     sched.write := Bool(true) // add entry into scheduler
     regOpsLeft(freeSlot) := io.rowLen.bits.indB - UInt(1) // num ops left
+    // TODO duplicate this regOpsLeft to control both ins and outs
     // also save rowid in register for easy access
     regActualRowID(freeSlot) := io.rowLen.bits.indA
 
@@ -114,11 +116,12 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   workQ.enq.bits.ind := schedEntryNum // translate row number into scheduler entry number
   workQ.enq.bits.value := io.operands.bits.value
 
+  // TODO check number of operands entering
+
   // drain the reducer work queue; send either to opQ or to addQ:
   // check if the opQ corresponding to head item's scheduler entry has items
   // - if opQ has items, send head item and head of opQ to adder
   // - if not, send head item to opQ
-  val counts = Vec(opQ.map(x => x.count))
   val headCanOperate = (counts(workQ.deq.bits.ind) != UInt(0))
 
   val workQDests = Module(new DecoupledOutputDemux(p.vi, 2)).io
@@ -140,11 +143,11 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   ) <> addQ.enq
 
   // sanity check: inds from both sources should be the same
-  when(addQ.enq.valid & addQ.enq.ready) {
-    when(workQDests.out(1).bits.ind != opQDeq.bits.ind) {
-      printf("ERROR! addQ has different input inds: workQ = %d opQ = %d \n",
-         workQDests.out(1).bits.ind, opQDeq.bits.ind)
-    }
+
+  when(addQ.enq.valid & addQ.enq.ready &
+    (workQDests.out(1).bits.ind != opQDeq.bits.ind)) {
+    printf("***ERROR! addQ has different input inds: workQ = %d opQ = %d \n",
+       workQDests.out(1).bits.ind, opQDeq.bits.ind)
   }
 
   addQ.deq <> add.in
@@ -161,16 +164,88 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
 
   resQDests.out(0) <> makeOpQMix.in(1)
   resQDests.out(1) <> retQ.enq
+  retQ.enq.bits.ind := resQHeadRowID
 
   // remove from scheduler when all operations completed
-  sched.clear_hit := isRowFinished
   sched.clear_tag := resQHeadRowID
+  sched.clear_hit := Bool(false)
 
   when(resQ.deq.valid & resQ.deq.ready) {
+    sched.clear_hit := isRowFinished
     // decrement the # operations left for the head row
     resQHeadOpsLeft := resQHeadOpsLeft - UInt(1)
   }
 
   // expose results
   retQ.deq <> io.results
+
+  // printfs for debugging ====================================================
+  val verbose_debug = false
+  if(verbose_debug) {
+    printf("====================================================\n")
+    printf("queue counts: wq = %d addq = %d resq = %d retq = %d\n",
+      workQ.count, addQ.count, resQ.count, retQ.count
+    )
+    printf("opQ counts: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", counts(i))}
+    printf("\n")
+
+    when(io.rowLen.ready & io.rowLen.valid) {
+      printf("scheduler add: slot = %d rowid = %d rowlen = %d\n",
+        freeSlot, io.rowLen.bits.indA, io.rowLen.bits.indB)
+    }
+
+    when(io.operands.valid & !sched.hit) {
+      printf("op from row %d can't enter, not in sched\n", io.operands.bits.ind)
+    } .elsewhen (workQ.enq.valid & workQ.enq.ready) {
+      printf("entered workQ: id %d value %d \n", schedEntryNum, io.operands.bits.value)
+    }
+
+    when(opQEnq.ready & opQEnq.valid) {
+      printf("add to opQ %d, value %d \n", opQEnqSel, opQEnq.bits.value)
+    }
+
+    when(addQ.enq.valid & addQ.enq.ready) {
+      printf("enter addQ: id %d val1 %d val2 %d \n",
+      addQ.enq.bits.rowInd, addQ.enq.bits.matrixVal, addQ.enq.bits.vectorVal)
+    }
+
+    when(resQ.deq.valid & resQ.deq.ready) {
+      printf("removed from resQ, id %d opsLeft %d isFinished %d\n",
+      resQ.deq.bits.ind, resQHeadOpsLeft, isRowFinished)
+    }
+
+    when(retQ.enq.valid & retQ.enq.ready) {
+      printf("retire: rowind %d sum %d \n", retQ.enq.bits.ind, retQ.enq.bits.value)
+    }
+  }
 }
+
+/*
+class RMReducerTester(c: RowMajorReducer) extends Tester(c) {
+  poke(c.io.results.ready, 1)
+
+  poke(c.io.operands.bits.value, 10)
+  poke(c.io.operands.bits.ind, 1)
+  poke(c.io.operands.valid, 1)
+  peek(c.io.operands.ready)
+
+  poke(c.io.rowLen.bits.indA, 1)
+  poke(c.io.rowLen.bits.indB, 2)
+  poke(c.io.rowLen.valid, 1)
+  peek(c.io.rowLen.ready)
+  step(1)
+  peek(c.io.operands.ready)
+  poke(c.io.rowLen.bits.indA, 2)
+  poke(c.io.rowLen.bits.indB, 4)
+  peek(c.io.rowLen.ready)
+  step(1)
+  poke(c.io.rowLen.valid, 0)
+  step(1)
+  peek(c.io.rowLen.valid)
+  poke(c.io.operands.valid, 0)
+
+  for(i <- 0 until 10)
+    step(1)
+}
+*/
