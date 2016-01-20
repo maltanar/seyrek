@@ -4,11 +4,13 @@ import Chisel._
 import TidbitsPlatformWrapper._
 import TidbitsStreams._
 
+// TODO support both CSR and CSC from same template
+
 class SpMVProcElemIF(pSeyrek: SeyrekParams) extends Bundle {
   val start = Bool(INPUT)
   val mode = UInt(INPUT, width = 10)
   val finished = Bool(OUTPUT)
-  val csc = new CSCSpMV(pSeyrek).asInput
+  val csr = new CSRSpMV(pSeyrek).asInput
   val contextReqCnt = UInt(INPUT, width = 10)
   // performance counter access
   val perfCtrSel = UInt(INPUT, width = 10)
@@ -27,8 +29,8 @@ extends GenericAccelerator(p) {
   var fullPerfCtrMap = scala.collection.mutable.Map[String, Int]()
 
   for(i <- 0 until pSeyrek.numPEs) {
-    val backend = Module(new SpMVBackend(pSeyrek))
-    val frontend = Module(new SpMVFrontend(pSeyrek))
+    val backend = Module(new RowMajorBackend(pSeyrek))
+    val frontend = Module(new RowMajorFrontend(pSeyrek))
     val ioPE = io.pe(i)
 
     backend.io.contextReqCnt := ioPE.contextReqCnt
@@ -41,17 +43,14 @@ extends GenericAccelerator(p) {
     ioPE.finished := Mux(ioPE.mode === SeyrekModes.START_REGULAR,
                       frontend.io.finished, backend.io.finished)
 
-    ioPE.csc <> backend.io.csc
+    ioPE.csr <> backend.io.csr
     for(mp <- 0 until pSeyrek.portsPerPE)
       backend.io.mainMem(mp) <> io.memPort(i * pSeyrek.portsPerPE + mp)
 
-    ioPE.csc <> frontend.io.csc
+    ioPE.csr <> frontend.io.csr
+    backend.io.rowLen <> frontend.io.rowLen
     backend.io.workUnits <> frontend.io.workUnits
-
-    frontend.io.contextLoadReq <> backend.io.contextLoadReq
-    frontend.io.contextSaveReq <> backend.io.contextSaveReq
-    backend.io.contextLoadRsp <> frontend.io.contextLoadRsp
-    backend.io.contextSaveRsp <> frontend.io.contextSaveRsp
+    frontend.io.results <> backend.io.results
 
     // keep a per-PE cycle count register, tracks time start -> finished
     val regCycleCount = Reg(init = UInt(0, 32))
@@ -66,22 +65,13 @@ extends GenericAccelerator(p) {
     // also output as printfs on the Chisel C++ emulator
     // TODO control the printfs
     val monWU = StreamMonitor(frontend.io.workUnits, yes, s"$i workUnits")
-    val monCLQ = StreamMonitor(frontend.io.contextLoadReq, yes, s"$i contextLoadReq")
-    val monCSQ = StreamMonitor(frontend.io.contextSaveReq, yes, s"$i contextSaveReq")
-    val monCLP = StreamMonitor(frontend.io.contextLoadRsp, yes, s"$i contextLoadRsp")
-    val monCSP = StreamMonitor(frontend.io.contextSaveRsp, yes, s"$i contextSaveRsp")
 
     // performance counter stuff
     val regPerfCtrSel = Reg(next = ioPE.perfCtrSel)
 
     val perfCtrMap = Map[String, Data](
       "cycleCount" -> regCycleCount,
-      "hazardStallCycles" -> frontend.io.hazardStallCycles,
-      "workUnits" -> monWU,
-      "contextLoadReq" -> monCLQ,
-      "contextStoreReq" -> monCSQ,
-      "contextLoadRsp" -> monCLP,
-      "contextStoreRsp" -> monCSP
+      "workUnits" -> monWU
     )
 
     var allocInd: Int = 0

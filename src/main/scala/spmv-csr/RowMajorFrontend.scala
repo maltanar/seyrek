@@ -7,10 +7,7 @@ import TidbitsStreams._
 
 
 class RowMajorFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
-  // number of rows in the matrix
-  val rows = UInt(INPUT, width = p.indWidth)
-  // pointer to base of output vector
-  val outVec = UInt(INPUT, width = p.indWidth)
+  val csr = new CSRSpMV(p).asInput
   // length of each row, in-order
   val rowLen = Decoupled(p.i).flip
   // work units to the reducer
@@ -34,7 +31,7 @@ class RowMajorFrontend(p: SeyrekParams) extends Module {
 
   // add row numbers to create the (rownumber, rowlength) input to reducer
   val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
-  val rownums = NaturalNumbers(p.indWidth, startRegular, io.rows)
+  val rownums = NaturalNumbers(p.indWidth, startRegular, io.csr.rows)
 
   StreamJoin(inA = rownums, inB = io.rowLen, genO = p.ii,
     join = {(a: UInt, b: UInt) => IndIndPair(a,b) }

@@ -25,6 +25,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
 
   // instantiate result writer -- TODO parametrize type?
   val resWriter = Module(new ResultWriterSimple(p)).io
+  io.csr <> resWriter.csr
 
   // give reducer results to result writer
   io.results <> resWriter.results
@@ -97,9 +98,9 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   // synchronize streams to form a v-i-i structure (Aij, i, j)
   // this constitutes the x load requests
   val nzAndColInd = StreamJoin(readNZData.io.out, readColInd.io.out, p.vi,
-    {(a: UInt, b: UInt) => ValIndPair(a, b)})
+    {(a: UInt, b: UInt) => ValIndPair(a, b)}) // (Aij, j)
   val loadReqs = StreamJoin(nzAndColInd, rowInds, p.vii,
-    {(vi: ValIndPair, j: UInt) => ValIndInd(vi.value, vi.ind, j)}
+    {(vi: ValIndPair, j: UInt) => ValIndInd(vi.value, j, vi.ind)}
   )
 
   // instantiate input vector loader -- TODO parametrize with function from p
@@ -111,6 +112,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   // TODO inpVecLoader may need to signal finish in init mode
   inpVecLoader.start := io.start
   inpVecLoader.mode := io.mode
+  inpVecLoader.contextBase := io.csr.inpVec
 
   // run through x read to get work unit and send to frontend
   loadReqs <> inpVecLoader.loadReq
@@ -137,10 +139,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
 
 // TODO separate into own source file?
 class RowMajorResultWriterIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
-  // number of rows in the matrix
-  val rows = UInt(INPUT, width = p.indWidth)
-  // pointer to base of output vector
-  val outVec = UInt(INPUT, width = p.indWidth)
+  val csr = new CSRSpMV(p).asInput
   // received results, row-value pairs
   val results = Decoupled(p.vi).flip
   // req - rsp interface for memory writes
@@ -166,7 +165,7 @@ class ResultWriterSimple(p: SeyrekParams) extends Module {
 
   io.results <> writeMemFork.in
   // TODO make write channel ID parametrizable?
-  val wr = WriteArray(writeMemFork.outA, io.outVec, UInt(0), p.mrp)
+  val wr = WriteArray(writeMemFork.outA, io.csr.outVec, UInt(0), p.mrp)
   wr <> io.memWrReq
   writeMemFork.outB <> io.memWrDat
 
@@ -181,5 +180,5 @@ class ResultWriterSimple(p: SeyrekParams) extends Module {
     regCompletedRows := regCompletedRows + UInt(1)
   }
 
-  io.finished := Mux(startRegular, regCompletedRows === io.rows, Bool(true))
+  io.finished := Mux(startRegular, regCompletedRows === io.csr.rows, Bool(true))
 }

@@ -63,4 +63,21 @@ class ExtInpVecLoader(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val restoredReadCtx = readWait(readRspFork.outA.bits - UInt(chanIDBase))
   io.loadRsp.bits.matrixVal := restoredReadCtx.v
   io.loadRsp.bits.rowInd := restoredReadCtx.i
+
+
+  // printfs for debug
+  /*
+  when( readyReqs.ready & readyReqs.valid) {
+    printf("ExtInpVec load req. val = %d i = %d j = %d \n",
+      io.loadReq.bits.v, io.loadReq.bits.i, io.loadReq.bits.j
+    )
+  }
+
+  when( io.loadRsp.ready & io.loadRsp.valid) {
+    printf("ExtInpVec load rsp. val1 = %d val2 = %d i = %d \n",
+      io.loadRsp.bits.matrixVal, io.loadRsp.bits.vectorVal,
+      io.loadRsp.bits.rowInd
+    )
+  }
+  */
 }

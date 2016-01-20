@@ -53,21 +53,22 @@ object ChannelConfigs {
     "ctxmem-w" -> ReadChanParams(maxReadTxns = 8, port = 0)
   )
   val csrTest = Map(
-    "ptrs" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "inds" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "inpvec" -> ReadChanParams(maxReadTxns = 8, port = 0)
+    "ptrs" -> ReadChanParams(maxReadTxns = 8, port = 1),
+    "inds" -> ReadChanParams(maxReadTxns = 8, port = 3),
+    "nzdata" -> ReadChanParams(maxReadTxns = 8, port = 0),
+    "inpvec" -> ReadChanParams(maxReadTxns = 8, port = 2)
   )
 }
 
 class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "CSRTest"
   val numPEs = 1
-  val portsPerPE = 1
+  val portsPerPE = 4
   val chanConfig = ChannelConfigs.csrTest
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
+  // unused
   val makeContextMemory = { r: ReadChanParams =>
     new BRAMContextMem(new BRAMContextMemParams(
       depth = 1024, readLatency = 1, writeLatency = 1, chanID = r.chanBaseID ,
@@ -171,6 +172,7 @@ object SeyrekMainObj {
   type PlatformMap = Map[String, PlatformInstFxn]
 
   val accelMap: AccelMap  = Map(
+    "CSRTest" -> {p => new SpMVAccel(p, new CSRTestParams(p))},
     "UInt32BRAM" -> {p => new SpMVAccel(p, new UInt32BRAMSpMVParams(p))},
     "UInt64Ext" -> {p => new SpMVAccel(p, new UInt64ExtSpMVParams(p))},
     "UInt64BRAM" -> {p => new SpMVAccel(p, new UInt64BRAMSpMVParams(p))}
@@ -218,10 +220,10 @@ object SeyrekMainObj {
     for(f <- files) { fileCopy(regDrvRoot + f, "emulator/" + f) }
     // copy Seyrek support files
     val seyrekDrvRoot = "src/main/cpp/"
-    val seyrekFiles = Array("commonsemirings.hpp", "hwcscspmv.hpp",
-      "semiring.hpp", "wrapperregdriver.h", "csc.hpp", "main.cpp",
-      "cscspmv.hpp", "platform.h", "swcscspmv.hpp", "seyrek-tester.cpp",
-      "seyrekconsts.hpp", "parallelspmv.hpp")
+    val seyrekFiles = Array("commonsemirings.hpp", "HWCSRSpMV.hpp",
+      "semiring.hpp", "wrapperregdriver.h", "CSR.hpp", "main-csr.cpp",
+      "CSRSpMV.hpp", "platform.h", "SWCSRSpMV.hpp", "seyrek-tester.cpp",
+      "seyrekconsts.hpp")
     for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, "emulator/" + f) }
   }
 
@@ -244,8 +246,6 @@ object SeyrekMainObj {
   }
 
   def main(args: Array[String]): Unit = {
-    val p = new CSRTestParams(TesterWrapperParams)
-    chiselMain(Array("--v"), () => Module(new RowMajorBackend(p)))
     if (args.size != 3) {
       showHelp()
       return
