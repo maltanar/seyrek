@@ -40,8 +40,7 @@ extends GenericAccelerator(p) {
     backend.io.mode := ioPE.mode
     frontend.io.mode := ioPE.mode
 
-    ioPE.finished := Mux(ioPE.mode === SeyrekModes.START_REGULAR,
-                      frontend.io.finished, backend.io.finished)
+    ioPE.finished := backend.io.finished
 
     ioPE.csr <> backend.io.csr
     for(mp <- 0 until pSeyrek.portsPerPE)

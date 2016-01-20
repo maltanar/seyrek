@@ -5,7 +5,6 @@ import TidbitsDMA._
 import TidbitsOCM._
 import TidbitsStreams._
 
-
 class RowMajorFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csr = new CSRSpMV(p).asInput
   // length of each row, in-order
@@ -55,13 +54,19 @@ class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
   val qA = Module(new FPGAQueue(p.vi, 2)).io
   val qB = Module(new FPGAQueue(p.vi, 2)).io
 
-  val regCrossSel = Reg(init = UInt(0, width = 1))
-  regCrossSel := !regCrossSel // switch the crossing every cycle
+
+
+  val regCrossSel = Reg(init = Bool(false))
+  val txnA = qA.enq.valid & qA.enq.ready
+  val txnB = qB.enq.valid & qB.enq.ready
+
+  // switch the crossing every odd # of transactions
+  when(txnA ^ txnB) {regCrossSel := !regCrossSel}
 
   val demuxA = Module(new DecoupledOutputDemux(p.vi, 2)).io
   io.inA <> demuxA.in
-
   demuxA.sel := regCrossSel
+
   val demuxB = Module(new DecoupledOutputDemux(p.vi, 2)).io
   io.inB <> demuxB.in
   demuxB.sel := regCrossSel
@@ -75,12 +80,33 @@ class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
   muxQB.sel := regCrossSel
 
   demuxA.out(0) <> muxQA.in(0)
-  demuxA.out(1) <> muxQB.in(0)
-  demuxB.out(0) <> muxQA.in(1)
-  demuxB.out(1) <> muxQB.in(1)
+  demuxA.out(1) <> muxQB.in(1)
+  demuxB.out(0) <> muxQB.in(0)
+  demuxB.out(1) <> muxQA.in(1)
 
+  // debug and  sanity check: inds from both sources should be the same
+  /*TODO don't need to keep the indices, values are enough (gen as constant)*/
+  /*
+  when(qA.enq.valid & qA.enq.ready) {
+    printf("qA enter: %d %d\n", qA.enq.bits.value, qA.enq.bits.ind)
+  }
+
+  when(qB.enq.valid & qB.enq.ready) {
+    printf("qB enter: %d %d\n", qB.enq.bits.value, qB.enq.bits.ind)
+  }
+
+  when(io.out.valid & io.out.ready) {
+    printf("upsizer exit: %d %d %d \n",
+      io.out.bits.rowInd, io.out.bits.matrixVal, io.out.bits.vectorVal
+    )
+    when(qA.deq.bits.ind != qB.deq.bits.ind) {
+      printf("***ERROR! addQ has different input inds: workQ = %d opQ = %d \n",
+         qA.deq.bits.ind, qB.deq.bits.ind)
+     }
+  }
+  */
   StreamJoin(
-    inA = qA.deq, inB = qB.deq, genO = p.vv,
+    inA = qA.deq, inB = qB.deq, genO = p.wu,
     join = {(a: ValIndPair, b: ValIndPair) => WorkUnit(a.value, b.value, a.ind)}
   ) <> io.out
 }
@@ -101,24 +127,32 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
 
   // queues for holding operand + scheduler entry number
   val opQ = Vec.fill(p.issueWindow) {Module(new FPGAQueue(p.vi, opQDepth)).io}
+  // upsizer for issuing add ops. inA from the adder, inB from the opQ
+  val ups = Vec.fill(p.issueWindow) {Module(new RowMajorReducerUpsizer(p)).io}
+  // demux for the upsizer stream inputs
+  val upsEntrySel = UInt(width = log2Up(p.issueWindow))
+  val upsEntry = DecoupledOutputDemux(upsEntrySel, ups.map(_.inA))
+  upsEntrySel := upsEntry.bits.ind
+  // round robin arbiter for popping the op pairs for the adder
+  val opArb = Module(new RRArbiter(p.wu, p.issueWindow)).io
+  for(i <- 0 until p.issueWindow) {
+    opQ(i).deq <> ups(i).inB
+    ups(i).out <> opArb.in(i)
+  }
+  // count of each op queue, useful for debug
   val counts = Vec(opQ.map(x => x.count))
-  // signals for controlling the enq/deq value
+  // signal for controlling the enq index to the opQ's
   val opQEnqSel = UInt(width = log2Up(p.issueWindow))
-  val opQDeqSel = UInt(width = log2Up(p.issueWindow))
   // demuxer for enq into op queues
   val opQEnq = DecoupledOutputDemux(opQEnqSel, opQ.map(x => x.enq))
-  // muxer for deq from op queues
-  val opQDeq = DecoupledInputMux(opQDeqSel, opQ.map(x => x.deq))
-  // queue that keeps the operands with translated IDs
-  val workQ = Module(new FPGAQueue(p.vi, 2)).io
-  // interleave elements to opQ with a round-robin arbiter (comes either from
-  // resQ or workQ)
-  val makeOpQMix = Module(new RRArbiter(p.vi, 2)).io
 
   // the adder as defined by the semiring
   val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
+  // queue that keeps the operands with translated IDs
+  val workQ = Module(new FPGAQueue(p.vi, 2)).io
   val addQ = Module(new FPGAQueue(p.wu, 2)).io  // adder inputs
   val resQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results
+  val resOpQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results back to ops
   val retQ = Module(new FPGAQueue(p.vi, 2)).io  // rows ready to retire
 
   // scheduler bookkeeping
@@ -163,42 +197,17 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
 
   // TODO check number of operands entering
 
-  // drain the reducer work queue; send either to opQ or to addQ:
-  // check if the opQ corresponding to head item's scheduler entry has items
-  // - if opQ has items, send head item and head of opQ to adder
-  // - if not, send head item to opQ
-  val headCanOperate = (counts(workQ.deq.bits.ind) != UInt(0))
+  // workQ flows directly into the operand queues
+  workQ.deq <> opQEnq
+  opQEnqSel := opQEnq.bits.ind  // selected according to ind
 
-  val workQDests = Module(new DecoupledOutputDemux(p.vi, 2)).io
-  workQ.deq <> workQDests.in
-  workQDests.sel := headCanOperate
-  workQDests.out(0) <> makeOpQMix.in(0)
-  // workQDests.out(1) is connected to the adder input queue
-
-  opQDeqSel := workQDests.out(1).bits.ind
-
-  makeOpQMix.out <> opQEnq
-  opQEnqSel := opQEnq.bits.ind
-
-  // use StreamJoin to driver the input to the adder queue
-  StreamJoin(
-    inA = workQDests.out(1), inB = opQDeq, genO = p.wu, join = {
-      (a: ValIndPair, b: ValIndPair) => WorkUnit(a.value, b.value, a.ind)
-    }
-  ) <> addQ.enq
-
-  // sanity check: inds from both sources should be the same
-
-  when(addQ.enq.valid & addQ.enq.ready &
-    (workQDests.out(1).bits.ind != opQDeq.bits.ind)) {
-    printf("***ERROR! addQ has different input inds: workQ = %d opQ = %d \n",
-       workQDests.out(1).bits.ind, opQDeq.bits.ind)
-  }
-
+  // the opArb arbiter pulls out operand pairs that are ready to go, and puts
+  // them into the addQ
+  opArb.out <> addQ.enq
   addQ.deq <> add.in
-  add.out <> resQ.enq
+  add.out <> resQ.enq // all adder results flow into resQ
 
-  // resQ goes into opQ or retQ, decided by isRowFinished
+  // resQ goes into resOpQ or retQ, decided by isRowFinished
   val resQHeadOpsLeft = regOpsLeft(resQ.deq.bits.ind) // head # ops left
   val resQHeadRowID = regActualRowID(resQ.deq.bits.ind) // head row id
   val isRowFinished = (resQHeadOpsLeft === UInt(1))
@@ -207,9 +216,13 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   resQDests.sel := isRowFinished
   resQ.deq <> resQDests.in
 
-  resQDests.out(0) <> makeOpQMix.in(1)
+  resQDests.out(0) <> resOpQ.enq
   resQDests.out(1) <> retQ.enq
   retQ.enq.bits.ind := resQHeadRowID
+
+  // the resOpQ flows into a demuxer for joining up with the operands via the
+  // upsizers
+  resOpQ.deq <> upsEntry
 
   // remove from scheduler when all operations completed
   sched.clear_tag := resQHeadRowID
