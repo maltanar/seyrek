@@ -32,8 +32,27 @@ trait SeyrekParams {
   def vi = new ValIndPair(valWidth, indWidth) // (value, index)
   def vv = new BinaryMathOperands(valWidth) // (value, value)
   def ii = new IndIndPair(indWidth) // (index, index)
+  def vii = new ValIndInd(valWidth, indWidth) // (value, index, index)
   // channel-to-port mapping
    def chanConfig: Map[String, ReadChanParams]
+}
+
+class ValIndInd(valWidth: Int, indWidth: Int) extends Bundle {
+  val v = UInt(width = valWidth)
+  val i = UInt(width = indWidth)
+  val j = UInt(width = indWidth)
+
+  override def cloneType: this.type = new ValIndInd(valWidth, indWidth).asInstanceOf[this.type]
+}
+
+object ValIndInd {
+  def apply(v: UInt, i: UInt, j: UInt): ValIndInd = {
+    val vii = new ValIndInd(v.getWidth(), i.getWidth())
+    vii.v := v
+    vii.i := i
+    vii.j := j
+    vii
+  }
 }
 
 class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
