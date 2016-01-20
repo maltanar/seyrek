@@ -55,7 +55,8 @@ object ChannelConfigs {
   val csrTest = Map(
     "ptrs" -> ReadChanParams(maxReadTxns = 2, port = 0),
     "inds" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0)
+    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
+    "inpvec" -> ReadChanParams(maxReadTxns = 8, port = 0)
   )
 }
 

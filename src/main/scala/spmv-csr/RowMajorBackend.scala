@@ -23,7 +23,6 @@ class RowMajorBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
 class RowMajorBackend(p: SeyrekParams) extends Module {
   val io = new RowMajorBackendIO(p)
 
-  // TODO instantiate the x reader
   // instantiate result writer -- TODO parametrize type?
   val resWriter = Module(new ResultWriterSimple(p)).io
 
@@ -36,7 +35,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   io.mainMem(0).memWrRsp <> resWriter.memWrRsp
 
   // completion determination is by the result writer
-  // TODO this will change for other x readers
+  // TODO this may change for other x readers -- init phase may happen
   resWriter.start := io.start
   resWriter.mode := io.mode
   io.finished := resWriter.finished
@@ -85,17 +84,37 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   memsys.connectChanReqRsp("nzdata", readNZData.io.req, readNZData.io.rsp)
 
   val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
-  // generate row inds (will be repeated to form rowInds)
-  val rowIndNoRep = NaturalNumbers(p.indWidth, startRegular, io.csr.rows)
   // use the row pointers to generate row lengths with StreamDelta
   val rowlens = StreamDelta(readRowPtr.io.out)
   val rowLenQ = Module(new FPGAQueue(p.i, 2)).io
+  // need two copies of the row length stream: one for backend, one for frontend
   StreamCopy(rowlens, io.rowLen, rowLenQ.enq)
+  // generate row inds for backend (will be repeated to form rowInds)
+  val rowIndNoRep = NaturalNumbers(p.indWidth, startRegular, io.csr.rows)
   // repeat to generate the row inds
-  val rowInds = StreamRepeatElem(rowIndNoRep, rowLenQ.deq)
+  val rowInds = StreamRepeatElem(rowIndNoRep, rowLenQ.deq)  // the j stream
 
-  // TODO synchronize streams to form a v-i-i structure (Aij, i, j)
-  // TODO run through x read to get work unit and send to frontend
+  // synchronize streams to form a v-i-i structure (Aij, i, j)
+  // this constitutes the x load requests
+  val nzAndColInd = StreamJoin(readNZData.io.out, readColInd.io.out, p.vi,
+    {(a: UInt, b: UInt) => ValIndPair(a, b)})
+  val loadReqs = StreamJoin(nzAndColInd, rowInds, p.vii,
+    {(vi: ValIndPair, j: UInt) => ValIndInd(vi.value, vi.ind, j)}
+  )
+
+  // instantiate input vector loader -- TODO parametrize with function from p
+  val inpVecLoader = Module(
+    new ExtInpVecLoader(p, memsys.getChanParams("inpvec").chanBaseID)
+  ).io
+  memsys.connectChanReqRsp("inpvec", inpVecLoader.mainMem.memRdReq,
+    inpVecLoader.mainMem.memRdRsp)
+  // TODO inpVecLoader may need to signal finish in init mode
+  inpVecLoader.start := io.start
+  inpVecLoader.mode := io.mode
+
+  // run through x read to get work unit and send to frontend
+  loadReqs <> inpVecLoader.loadReq
+  inpVecLoader.loadRsp <> io.workUnits
 
   val bytesVal = UInt(p.valWidth / 8)
   val bytesInd = UInt(p.indWidth / 8)
