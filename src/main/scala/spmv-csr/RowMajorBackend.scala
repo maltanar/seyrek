@@ -181,4 +181,12 @@ class ResultWriterSimple(p: SeyrekParams) extends Module {
   }
 
   io.finished := Mux(startRegular, regCompletedRows === io.csr.rows, Bool(true))
+
+  // printfs for debug
+  /*
+  when(io.results.ready & io.results.valid) {
+    printf("ResultWriter got result: row %d value %d \n",
+    io.results.bits.ind, io.results.bits.value)
+  }
+  */
 }
