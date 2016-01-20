@@ -41,6 +41,50 @@ class RowMajorFrontend(p: SeyrekParams) extends Module {
   red.results <> io.results
 }
 
+// produce a pair of operands for an associative op from an incoming pair of
+// streams. basically a pair of output queues and a crossbar that switches
+// every cycle to make sure both the output queues can get filled, regardless
+// of which input streams are active.
+// probably could have been much simpler...
+class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
+  val io = new Bundle {
+    val inA = Decoupled(p.vi).flip
+    val inB = Decoupled(p.vi).flip
+    val out = Decoupled(p.wu)
+  }
+  val qA = Module(new FPGAQueue(p.vi, 2)).io
+  val qB = Module(new FPGAQueue(p.vi, 2)).io
+
+  val regCrossSel = Reg(init = UInt(0, width = 1))
+  regCrossSel := !regCrossSel // switch the crossing every cycle
+
+  val demuxA = Module(new DecoupledOutputDemux(p.vi, 2)).io
+  io.inA <> demuxA.in
+
+  demuxA.sel := regCrossSel
+  val demuxB = Module(new DecoupledOutputDemux(p.vi, 2)).io
+  io.inB <> demuxB.in
+  demuxB.sel := regCrossSel
+
+  val muxQA = Module(new DecoupledInputMux(p.vi, 2)).io
+  muxQA.out <> qA.enq
+  muxQA.sel := regCrossSel
+
+  val muxQB = Module(new DecoupledInputMux(p.vi, 2)).io
+  muxQB.out <> qB.enq
+  muxQB.sel := regCrossSel
+
+  demuxA.out(0) <> muxQA.in(0)
+  demuxA.out(1) <> muxQB.in(0)
+  demuxB.out(0) <> muxQA.in(1)
+  demuxB.out(1) <> muxQB.in(1)
+
+  StreamJoin(
+    inA = qA.deq, inB = qB.deq, genO = p.vv,
+    join = {(a: ValIndPair, b: ValIndPair) => WorkUnit(a.value, b.value, a.ind)}
+  ) <> io.out
+}
+
 // note that the name "RowMajorFrontend" is a slight misnomer; the design will
 // support small deviations from row-major (needed to support out-of-order
 //  data returns from the x read)
