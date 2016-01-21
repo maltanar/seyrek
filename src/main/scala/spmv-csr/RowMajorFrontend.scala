@@ -159,7 +159,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   // the row major reducer uses a scheduler to keep track of the status of each
   // row: may be several rows in the reducer at a time due to out-of-order
   val sched = Module(new CAM(entries = p.issueWindow, tag_bits = p.indWidth)).io
-  val regOpsLeft = Vec.fill(p.issueWindow) { Reg(init = UInt(0, p.indWidth)) }
+  val regNZLeft = Vec.fill(p.issueWindow) { Reg(init = UInt(0, p.indWidth)) }
   val regActualRowID = Vec.fill(p.issueWindow) { Reg(init = UInt(0, p.indWidth)) }
 
   // ******************** reducer logic ************************
@@ -173,8 +173,8 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
 
   when(io.rowLen.ready & io.rowLen.valid) {
     sched.write := Bool(true) // add entry into scheduler
-    regOpsLeft(freeSlot) := io.rowLen.bits.indB - UInt(1) // num ops left
-    // TODO duplicate this regOpsLeft to control both ins and outs
+    regNZLeft(freeSlot) := io.rowLen.bits.indB // # nonzeroes left
+    // TODO duplicate this regNZLeft to control both ins and outs
     // also save rowid in register for easy access
     regActualRowID(freeSlot) := io.rowLen.bits.indA
 
@@ -208,9 +208,9 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   add.out <> resQ.enq // all adder results flow into resQ
 
   // resQ goes into resOpQ or retQ, decided by isRowFinished
-  val resQHeadOpsLeft = regOpsLeft(resQ.deq.bits.ind) // head # ops left
+  val resQHeadNZLeft = regNZLeft(resQ.deq.bits.ind) // head # ops left
   val resQHeadRowID = regActualRowID(resQ.deq.bits.ind) // head row id
-  val isRowFinished = (resQHeadOpsLeft === UInt(1))
+  val isRowFinished = (resQHeadNZLeft <= UInt(2))
 
   val resQDests = Module(new DecoupledOutputDemux(p.vi, 2)).io
   resQDests.sel := isRowFinished
@@ -231,7 +231,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   when(resQ.deq.valid & resQ.deq.ready) {
     sched.clear_hit := isRowFinished
     // decrement the # operations left for the head row
-    resQHeadOpsLeft := resQHeadOpsLeft - UInt(1)
+    resQHeadNZLeft := resQHeadNZLeft - UInt(1)
   }
 
   // expose results
@@ -269,8 +269,8 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
     }
 
     when(resQ.deq.valid & resQ.deq.ready) {
-      printf("removed from resQ, id %d opsLeft %d isFinished %d\n",
-      resQ.deq.bits.ind, resQHeadOpsLeft, isRowFinished)
+      printf("removed from resQ, id %d NZLeft %d isFinished %d\n",
+      resQ.deq.bits.ind, resQHeadNZLeft, isRowFinished)
     }
 
     when(retQ.enq.valid & retQ.enq.ready) {
