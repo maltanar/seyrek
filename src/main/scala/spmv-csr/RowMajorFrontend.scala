@@ -47,21 +47,30 @@ class RowMajorFrontend(p: SeyrekParams) extends Module {
 
 // produce a pair of operands for an associative op from an incoming pair of
 // streams. basically a pair of output queues and a crossbar that switches
-// every cycle to make sure both the output queues can get filled, regardless
+// to make sure both the output queues can get filled, regardless
 // of which input streams are active.
-// probably could have been much simpler...
+// probably could have been much simpler...but this seems to work.
+class RowMajorReducerUpsizerIO(p: SeyrekParams) extends Bundle {
+  val inA = Decoupled(p.vi).flip
+  val inB = Decoupled(p.vi).flip
+  val out = Decoupled(p.wu)
+  val aCount = UInt(OUTPUT, 2)
+  val bCount = UInt(OUTPUT, 2)
+
+  override def cloneType: this.type = new RowMajorReducerUpsizerIO(p).asInstanceOf[this.type]
+}
+
 class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
-  val io = new Bundle {
-    val inA = Decoupled(p.vi).flip
-    val inB = Decoupled(p.vi).flip
-    val out = Decoupled(p.wu)
-  }
+  val io = new RowMajorReducerUpsizerIO(p)
 
   val qiA = FPGAQueue(io.inA, 2)
   val qiB = FPGAQueue(io.inB, 2)
 
   val qA = Module(new FPGAQueue(p.vi, 2)).io
   val qB = Module(new FPGAQueue(p.vi, 2)).io
+
+  io.aCount := qA.count
+  io.bCount := qB.count
 
   val crossSel = Bool()
 
@@ -204,9 +213,10 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   // - special case: put into oneQ if this was a one-element row
 
   sched.tag := io.operands.bits.ind
-  io.operands.ready := sched.hit & workQ.enq.ready & oneQ.enq.ready
   val schedEntryNum = PriorityEncoder(sched.hits) // entry where rowid is found
   val isRowSingleElem = regNZLeft(schedEntryNum) === UInt(1)
+  val targetReady = (isRowSingleElem & oneQ.enq.ready)  | (!isRowSingleElem & workQ.enq.ready)
+  io.operands.ready := sched.hit & targetReady
 
   // enqueue operand into oneQ if this is a single-element row
   oneQ.enq.valid := io.operands.valid & sched.hit & isRowSingleElem
@@ -258,6 +268,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   sched.clear_hit := Bool(false)
 
   when(resQ.deq.valid & resQ.deq.ready) {
+    when(isRowFinished) { sched.clear_hit := Bool(true) }
     sched.clear_hit := isRowFinished
     // decrement the # operations left for the head row
     resQHeadNZLeft := resQHeadNZLeft - UInt(1)
@@ -266,20 +277,89 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   // expose results
   retQ.deq <> io.results
 
+  // sanity check: each entry should be found only once in the scheduler
+  when(PopCount(sched.hits) > UInt(1)) {
+    printf("***ERROR! Found multiple scheduler hits for %d\n",
+      sched.tag
+    )
+  }
+  // other sanity checks
+  when(resQ.deq.valid & resQ.deq.ready & isRowFinished &
+    (ups(resQ.deq.bits.ind).aCount != UInt(0) ||
+      ups(resQ.deq.bits.ind).bCount != UInt(0))
+    ) {
+    printf("***ERROR! retiring element %d still has stuff in queue\n",
+      resQ.deq.bits.ind
+    )
+  }
+
+  when(workQ.enq.ready & workQ.enq.valid &
+    regNZLeft(workQ.enq.bits.ind) < UInt(2)
+  ) {
+    printf("***ERROR! This should not go to workQ: %d %d \n",
+      workQ.enq.bits.ind, workQ.enq.bits.value
+    )
+  }
+
+  when(opQEnq.ready & opQEnq.valid & regNZLeft(opQEnq.bits.ind) < UInt(2)) {
+    printf("***ERROR! This should not go to opQ: %d %d \n",
+      opQEnq.bits.ind, opQEnq.bits.value
+    )
+  }
+
+  when(addQ.enq.ready & addQ.enq.valid &
+    regNZLeft(addQ.enq.bits.rowInd) < UInt(2)
+  ) {
+    printf("***ERROR! This should not go to addQ: %d \n",
+      addQ.enq.bits.rowInd
+    )
+  }
+
+  when(resQ.deq.valid & !sched.valid_bits(resQ.deq.bits.ind)) {
+    printf("***ERROR! resQ has result from invalid slot %d val %d \n",
+      resQ.deq.bits.ind, resQ.deq.bits.value
+    )
+  }
+
   // printfs for debugging ====================================================
   val verbose_debug = false
   if(verbose_debug) {
     printf("====================================================\n")
-    printf("queue counts: wq = %d addq = %d resq = %d retq = %d\n",
-      workQ.count, addQ.count, resQ.count, retQ.count
+    printf("queue counts: wq = %d addq = %d resq = %d retq = %d resOpQ = %d zeroQ = %d oneQ = %d \n",
+      workQ.count, addQ.count, resQ.count, retQ.count, resOpQ.count, zeroQ.count, oneQ.count
     )
     printf("opQ counts: \n")
     for(i <- 0 until p.issueWindow) {printf("%d ", counts(i))}
     printf("\n")
 
+    printf("ups counts: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d %d : ", ups(i).aCount, ups(i).bCount )}
+    printf("\n")
+
+    printf("scheduler valid bits: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", sched.valid_bits(i))}
+    printf("\n")
+
+    printf("rowID for each slot: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", regActualRowID(i))}
+    printf("\n")
+
+    printf("nz counts (may be unoccupied): \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", regNZLeft(i))}
+    printf("\n")
+
     when(io.rowLen.ready & io.rowLen.valid) {
       printf("scheduler add: slot = %d rowid = %d rowlen = %d\n",
         freeSlot, io.rowLen.bits.indA, io.rowLen.bits.indB)
+    }
+
+    when(zeroQ.enq.ready & zeroQ.enq.valid) {
+      printf("issued 0-entry for slot %d\n", zeroQ.enq.bits.ind)
+    }
+
+    when(oneQ.enq.ready & oneQ.enq.valid) {
+      printf("issued 1-entry for slot %d val %d\n",
+        oneQ.enq.bits.ind, oneQ.enq.bits.value)
     }
 
     when(io.operands.valid & !sched.hit) {
@@ -307,32 +387,3 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
     }
   }
 }
-
-/*
-class RMReducerTester(c: RowMajorReducer) extends Tester(c) {
-  poke(c.io.results.ready, 1)
-
-  poke(c.io.operands.bits.value, 10)
-  poke(c.io.operands.bits.ind, 1)
-  poke(c.io.operands.valid, 1)
-  peek(c.io.operands.ready)
-
-  poke(c.io.rowLen.bits.indA, 1)
-  poke(c.io.rowLen.bits.indB, 2)
-  poke(c.io.rowLen.valid, 1)
-  peek(c.io.rowLen.ready)
-  step(1)
-  peek(c.io.operands.ready)
-  poke(c.io.rowLen.bits.indA, 2)
-  poke(c.io.rowLen.bits.indB, 4)
-  peek(c.io.rowLen.ready)
-  step(1)
-  poke(c.io.rowLen.valid, 0)
-  step(1)
-  peek(c.io.rowLen.valid)
-  poke(c.io.operands.valid, 0)
-
-  for(i <- 0 until 10)
-    step(1)
-}
-*/
