@@ -51,33 +51,34 @@ class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
     val inB = Decoupled(p.vi).flip
     val out = Decoupled(p.wu)
   }
+
+  val qiA = FPGAQueue(io.inA, 2)
+  val qiB = FPGAQueue(io.inB, 2)
+
   val qA = Module(new FPGAQueue(p.vi, 2)).io
   val qB = Module(new FPGAQueue(p.vi, 2)).io
 
+  val crossSel = Bool()
 
-
-  val regCrossSel = Reg(init = Bool(false))
-  val txnA = qA.enq.valid & qA.enq.ready
-  val txnB = qB.enq.valid & qB.enq.ready
-
-  // switch the crossing every odd # of transactions
-  when(txnA ^ txnB) {regCrossSel := !regCrossSel}
+  when(qiA.valid & !qiB.valid & !qB.deq.valid) {crossSel := Bool(true)}
+  .elsewhen(!qiA.valid & qiB.valid & !qA.deq.valid) {crossSel := Bool(true)}
+  .otherwise(crossSel := Bool(false))
 
   val demuxA = Module(new DecoupledOutputDemux(p.vi, 2)).io
-  io.inA <> demuxA.in
-  demuxA.sel := regCrossSel
+  qiA <> demuxA.in
+  demuxA.sel := crossSel
 
   val demuxB = Module(new DecoupledOutputDemux(p.vi, 2)).io
-  io.inB <> demuxB.in
-  demuxB.sel := regCrossSel
+  qiB <> demuxB.in
+  demuxB.sel := crossSel
 
   val muxQA = Module(new DecoupledInputMux(p.vi, 2)).io
   muxQA.out <> qA.enq
-  muxQA.sel := regCrossSel
+  muxQA.sel := crossSel
 
   val muxQB = Module(new DecoupledInputMux(p.vi, 2)).io
   muxQB.out <> qB.enq
-  muxQB.sel := regCrossSel
+  muxQB.sel := crossSel
 
   demuxA.out(0) <> muxQA.in(0)
   demuxA.out(1) <> muxQB.in(1)
