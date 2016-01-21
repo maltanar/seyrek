@@ -155,6 +155,11 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   val resOpQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results back to ops
   val retQ = Module(new FPGAQueue(p.vi, 2)).io  // rows ready to retire
 
+  // rr arbiter for mixing 1- and 0-length results into resQ
+  val resQArb = Module(new RRArbiter(p.vi, 3)).io
+  val zeroQ = Module(new FPGAQueue(p.vi, 2)).io // injected zeroes
+  val oneQ = Module(new FPGAQueue(p.vi, 2)).io  // injected ones
+
   // scheduler bookkeeping
   // the row major reducer uses a scheduler to keep track of the status of each
   // row: may be several rows in the reducer at a time due to out-of-order
@@ -164,12 +169,20 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
 
   // ******************** reducer logic ************************
 
+
   // entry into scheduler: new rowLen becomes available
   val freeSlot = sched.freeInd
-  io.rowLen.ready := sched.hasFree
+  // check both against scheduler and zeroQ
+  io.rowLen.ready := sched.hasFree & zeroQ.enq.ready
   // use the row index as the CAM tag
   sched.write_tag := io.rowLen.bits.indA
   sched.write := Bool(false)
+
+  // emit a zero if this row had no nonzero elements
+  val isZeroRow = io.rowLen.bits.indB === UInt(0)
+  zeroQ.enq.valid := isZeroRow & io.rowLen.valid & sched.hasFree
+  zeroQ.enq.bits.value := UInt(0) // TODO semiring zero
+  zeroQ.enq.bits.ind := freeSlot  // zeroQ elem will be generated on sched ins.
 
   when(io.rowLen.ready & io.rowLen.valid) {
     sched.write := Bool(true) // add entry into scheduler
@@ -177,25 +190,29 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
     // TODO duplicate this regNZLeft to control both ins and outs
     // also save rowid in register for easy access
     regActualRowID(freeSlot) := io.rowLen.bits.indA
-
-    // TODO handle zero- and one-length ops!
-    when(io.rowLen.bits.indB <= UInt(1)) {
-      printf("ERROR: CSR reducer does not yet support 1- and 0-len rows!\n")
-    }
   }
 
   // new op for existing scheduler entry received
   // - check if exists in scheduler
   // - if so, translate row number into scheduler entry number and put in redQ
-  sched.tag := io.operands.bits.ind
-  io.operands.ready := sched.hit & workQ.enq.ready
-  val schedEntryNum = PriorityEncoder(sched.hits) // entry where rowid is found
+  // - special case: put into oneQ if this was a one-element row
 
-  workQ.enq.valid := io.operands.valid & sched.hit
+  sched.tag := io.operands.bits.ind
+  io.operands.ready := sched.hit & workQ.enq.ready & oneQ.enq.ready
+  val schedEntryNum = PriorityEncoder(sched.hits) // entry where rowid is found
+  val isRowSingleElem = regNZLeft(schedEntryNum) === UInt(1)
+
+  // enqueue operand into oneQ if this is a single-element row
+  oneQ.enq.valid := io.operands.valid & sched.hit & isRowSingleElem
+  oneQ.enq.bits.ind := schedEntryNum  // translate row number into scheduler entry number
+  oneQ.enq.bits.value := io.operands.bits.value
+
+  // enqueue operand into workQ for all else
+  workQ.enq.valid := io.operands.valid & sched.hit & !isRowSingleElem
   workQ.enq.bits.ind := schedEntryNum // translate row number into scheduler entry number
   workQ.enq.bits.value := io.operands.bits.value
 
-  // TODO check number of operands entering
+  // TODO check number of operands entering for sanity/error checking?
 
   // workQ flows directly into the operand queues
   workQ.deq <> opQEnq
@@ -205,7 +222,13 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   // them into the addQ
   opArb.out <> addQ.enq
   addQ.deq <> add.in
-  add.out <> resQ.enq // all adder results flow into resQ
+
+  // the resQ arbiter creates a mix between the zero-length, one-length and add
+  // result queues
+  zeroQ.deq <> resQArb.in(0)
+  oneQ.deq <> resQArb.in(1)
+  add.out <> resQArb.in(2)
+  resQArb.out <> resQ.enq
 
   // resQ goes into resOpQ or retQ, decided by isRowFinished
   val resQHeadNZLeft = regNZLeft(resQ.deq.bits.ind) // head # ops left
