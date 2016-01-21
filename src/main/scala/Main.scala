@@ -83,7 +83,7 @@ class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
   val makeSemiringMul = { () =>
     new SystolicSInt64Mul_5Stage()
   }
-  val issueWindow = 1
+  val issueWindow = 6
   val makeScheduler = { () => new InOrderScheduler(this) }
 }
 

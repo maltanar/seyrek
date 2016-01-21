@@ -32,7 +32,12 @@ class RowMajorFrontend(p: SeyrekParams) extends Module {
   val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
   val rownums = NaturalNumbers(p.indWidth, startRegular, io.csr.rows)
 
-  StreamJoin(inA = rownums, inB = io.rowLen, genO = p.ii,
+  // this queue is needed to decouple the consumption rate of the backend
+  // rowLen stream from the consumption rate of the reducer
+  // TODO make parametrizable?
+  val rowLen = FPGAQueue(io.rowLen, 16)
+
+  StreamJoin(inA = rownums, inB = rowLen, genO = p.ii,
     join = {(a: UInt, b: UInt) => IndIndPair(a,b) }
   ) <> red.rowLen
 
