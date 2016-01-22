@@ -126,6 +126,9 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   // also serves as a "valid" indicator for each line
   // TODO zero out all these upon init
   val regWordsInLine = Vec.fill(numLines) {Reg(init=UInt(0, log2Up(burstCount)))}
+  // # hits in progress for this cacheline, to avoid replacing data while
+  // this line is occupied
+  val regHitsInProgress = Vec.fill(numLines) {Reg(init=UInt(0, 3))}
   // the current tag stored in each line, content-searchable
   val regTags = Vec.fill(numLines) {Reg(init=UInt(0, numTagBits))}
   // counter for round robin replacement -- who to replace?
@@ -158,10 +161,6 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val tagHit = (tagMatch & lineReady).orR
   val tagHitPos = PriorityEncoder(tagHit)
 
-  /* TODO resolve simultaneous hit + replacement situations
-    e.g same line read in progress + selected for replacement
-  */
-
   // cache hit & return data =================================================
   lookupTag := reqQ.deq.bits.tag
 
@@ -178,6 +177,12 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   hitQ.enq.valid := reqQ.deq.valid & tagHit
   reqQ.deq.ready := hitQ.enq.ready & tagHit
 
+  // increment hit-in-progress counter for this line
+  when(hitQ.enq.valid & hitQ.enq.ready) {
+    val hitsToLine = regHitsInProgress(hitQ.enq.bits.lineNum)
+    hitsToLine := hitsToLine + UInt(1)
+  }
+
   // handshake over latency to fetch data and put into respQ
   // hitQ -> [mem] -> respQ
   val mAddrBase = hitQ.deq.bits.lineNum * UInt(burstCount)
@@ -189,6 +194,7 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   hitQ.deq.ready := canResp
   respQ.enq.valid := ShiftRegister(canResp & hitQ.deq.valid, memLatency)
   respQ.enq.bits.reqID := ShiftRegister(hitQ.deq.bits.reqID, memLatency)
+  val respLine = ShiftRegister(hitQ.deq.bits.lineNum, memLatency)
 
   // if there are multiple inp.vec elements per word, need to choose subword
   if(elemsPerMemWord > 1) {
@@ -199,6 +205,12 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     respQ.enq.bits.data := readPort.rsp.readData(wordEnd, wordStart)
   } else {
     respQ.enq.bits.data := readPort.rsp.readData
+  }
+
+  // decrement hit-in-progress counter for this line
+  when(respQ.enq.valid & respQ.enq.ready) {
+    val hitsToLine = regHitsInProgress(respLine)
+    hitsToLine := hitsToLine - UInt(1)
   }
 
   // cache miss: issue load requests ==========================================
@@ -237,10 +249,10 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   writePort.req.addr := wAddrBase + wAddrOffs
   writePort.req.writeData := mrsp.bits.readData
 
-  /* TODO prevent rcving data if this ID is currently being read (hit) */
-  mrsp.ready := Bool(true)  // always ready to accept mem.rsp. for now
+  // prevent rcving data if this ID is currently being read (hit)
+  mrsp.ready := regHitsInProgress(mrspID) === UInt(0)
 
-  when(mrsp.valid) {
+  when(mrsp.valid & mrsp.ready) {
     writePort.req.writeEn := Bool(true) // enable write to cache mem
     rspsReceived := rspsReceived + UInt(1)  // increment response counter
   }
