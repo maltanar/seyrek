@@ -217,10 +217,9 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   // able to issue a load to main memory
   val mreq = io.mainMem.memRdReq
-  val canDoLoad = mreq.ready  // TODO further restrict # outstanding loads?
 
   // set up defaults for the main memory read requests
-  mreq.valid := Bool(false)
+  mreq.valid := cacheMiss & !tagFound
   mreq.bits.channelID := regReplaceInd + UInt(chanIDBase)
   mreq.bits.isWrite := Bool(false)
   mreq.bits.addr := io.contextBase + reqQ.deq.bits.tag * UInt(bytesPerLine)
@@ -229,8 +228,7 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   // trigger load request and set replacement info when possible
   // why !tagFound? --> don't want a duplicate load
-  when(cacheMiss & !tagFound & canDoLoad) {
-    mreq.valid := Bool(true)        // issue load req to main mem
+  when(mreq.valid & mreq.ready) {
     // prepare structures for handling the received data
     regWordsInLine(regReplaceInd) := UInt(0)  // marks line as invalid/in-progr.
     regTags(regReplaceInd) := reqQ.deq.bits.tag // tag of line being rcvd
