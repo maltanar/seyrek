@@ -114,3 +114,33 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   // TODO handle load responses -- remove from loading, add to cached, cacheLines
 
 }
+
+class StreamShufflerIO[T <: Data](gen: T) extends Bundle {
+  val in = Decoupled(gen).flip
+  val out = Decoupled(gen)
+
+  override def cloneType: this.type = new StreamShufflerIO(gen).asInstanceOf[this.type]
+}
+
+// TODO the StreamShuffler system will need some experimentation to ensure it
+// does what we want, prioritizing old (waitQ) values but not too much
+class StreamShuffler[T <: Data](gen: T, numOut: Int, numWait: Int) extends Module {
+  val io = new StreamShufflerIO(gen)
+
+  val outQ = Module(new FPGAQueue(gen, numOut)).io
+  val waitQ = Module(new FPGAQueue(gen, numWait)).io
+
+  val mix = Module(new Arbiter(gen, 2)).io
+  waitQ.deq <> mix.in(0)
+  io.in <> mix.in(1)
+  mix.out <> waitQ.enq
+
+  // expose data in outQ to both waitQ and output
+  io.out.bits := outQ.deq.bits
+  waitQ.enq.bits := outQ.deq.bits
+
+  // first priority is the output; put outQ contents there if we can
+  io.out.valid := outQ.deq.valid
+  // if io.out is not ready, try to go to the waitQ
+  waitQ.enq.valid := outQ.deq.valid & !io.out.ready
+}
