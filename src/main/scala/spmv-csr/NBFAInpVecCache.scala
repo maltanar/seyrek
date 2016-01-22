@@ -24,7 +24,7 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   class CacheReq extends Bundle {
     // cache internal ID
     val reqID = UInt(width = log2Up(numCacheTxns))
-    // line tag (= line number for a fully associative cache)
+    // line tag
     val tag = UInt(width = numTagBits)
     // word offset in line
     val offs = UInt(width = numOffsBits)
@@ -41,11 +41,24 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
     cr
   }
 
+  class CacheTagRsp extends Bundle {
+    // cache internal ID
+    val reqID = UInt(width = log2Up(numCacheTxns))
+    // word offset in line
+    val offs = UInt(width = numOffsBits)
+    // location of line
+    val lineNum = UInt(width = log2Up(numLines))
+    override def cloneType: this.type = new CacheTagRsp().asInstanceOf[this.type]
+  }
+  val cacheTagRsp = new CacheTagRsp()
+
   class CacheRsp extends Bundle {
     // cache internal ID
     val reqID = UInt(width = log2Up(numCacheTxns))
     // response data
     val data = UInt(width = p.valWidth)
+
+    override def cloneType: this.type = new CacheRsp().asInstanceOf[this.type]
   }
   val cacheRsp = new CacheRsp()
 
@@ -99,16 +112,37 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   val loading = Module(new CAM(numReadTxns, numTagBits)).io
 
   // data storage
-  // TODO implement each line as multitap shift register instead?
-  val cacheLines = Vec.fill(numLines) {Reg(init = UInt(0, width = numLineBits))}
+  if(p.valWidth > p.mrp.dataWidth || p.mrp.dataWidth % p.valWidth != 0)
+    throw new Exception("Unsupported valWidth:dataWidth ratio")
+  val numMemWords = (numLineBits * numLines) / p.mrp.dataWidth
+  // TODO set to a large number to ensure BRAM gen -- real # words probably
+  // too shallow to be mapped into a BRAM
+  val mem = Module(new DualPortBRAM(1024, p.mrp.dataWidth)).io
+  // for reading cachelines to respond to requests
+  val readPort = mem.ports(0)
+  // for writing retrieved cachelines into memory
+  val writePort = mem.ports(1)
+  // disable write enables by default
+  readPort.req.writeEn := Bool(false)
+  writePort.req.writeEn := Bool(false)
 
   // TODO check issued request against cached
   // - if hit, return requested data
   // - if miss, put into waitQ and check loading requests
   //   - if not found in loading requests, issue load and add entry
   //   - if found in loading requests, do nothing
-  // alternatively, if we want full/proper miss handling, could put into a
-  // separate request queue for
+
+  cached.tag := reqQ.deq.bits.tag
+
+  val hitQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
+
+  hitQ.enq.bits.lineNum := PriorityEncoder(cached.hits)
+  hitQ.enq.bits.reqID := reqQ.deq.bits.reqID
+  hitQ.enq.bits.offs := reqQ.deq.bits.offs
+  hitQ.enq.valid := reqQ.deq.valid & cached.hit
+
+  // TODO handshake over latency to fetch data and put into respQ
+  // hitQ -> [mem] -> respQ
 
   // TODO issue loads
   // TODO handle load responses -- remove from loading, add to cached, cacheLines
