@@ -10,14 +10,23 @@ import TidbitsOCM._
 class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   val inOrder = false
 
-  // TODO parametrize queue sizes!
+  // TODO parametrize
+
+  if(p.valWidth > p.mrp.dataWidth || p.mrp.dataWidth % p.valWidth != 0)
+    throw new Exception("Unsupported valWidth:dataWidth ratio")
 
   val numReadTxns = 4
   val numCacheTxns = numReadTxns + 2
   val numLines = 4
-  val numWordsPerLine = 8
-  val numLineBits = numWordsPerLine * p.valWidth
-  val numOffsBits = log2Up(numWordsPerLine)
+
+  val burstCount = 8
+  val bytesPerMemWord = (p.mrp.dataWidth / 8)
+  val bytesPerLine = bytesPerMemWord * burstCount
+  val bytesPerElem = p.valWidth / 8
+  val elemsPerLine = bytesPerLine / bytesPerElem
+  val elemsPerMemWord = bytesPerMemWord / bytesPerElem
+
+  val numOffsBits = log2Up(elemsPerLine)
   val numTagBits = p.indWidth - numOffsBits
   val cacheReqID = UInt(width = log2Up(numCacheTxns))
   // this is what gets carried around the cache
@@ -83,7 +92,8 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   readyReqs <> reqQ.enq
 
   // responses ready to be processed
-  val respQ = Module(new FPGAQueue(cacheRsp, 4)).io
+  val respQCapacity = 4
+  val respQ = Module(new FPGAQueue(cacheRsp, respQCapacity)).io
 
   val readyResps = Module(new StreamFork(
     genIn = cacheRsp, genA = cacheReqID, genB = p.wu,
@@ -112,12 +122,10 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   val loading = Module(new CAM(numReadTxns, numTagBits)).io
 
   // data storage
-  if(p.valWidth > p.mrp.dataWidth || p.mrp.dataWidth % p.valWidth != 0)
-    throw new Exception("Unsupported valWidth:dataWidth ratio")
-  val numMemWords = (numLineBits * numLines) / p.mrp.dataWidth
+  val memLatency = 1
   // TODO set to a large number to ensure BRAM gen -- real # words probably
   // too shallow to be mapped into a BRAM
-  val mem = Module(new DualPortBRAM(1024, p.mrp.dataWidth)).io
+  val mem = Module(new DualPortBRAM(1024, bytesPerMemWord*8)).io
   // for reading cachelines to respond to requests
   val readPort = mem.ports(0)
   // for writing retrieved cachelines into memory
@@ -143,6 +151,26 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
 
   // TODO handshake over latency to fetch data and put into respQ
   // hitQ -> [mem] -> respQ
+  val mAddrBase = hitQ.deq.bits.lineNum * UInt(burstCount)
+  val mAddrOffs = hitQ.deq.bits.offs / UInt(elemsPerMemWord)
+  readPort.req.addr := mAddrBase + mAddrOffs
+
+  val canResp = respQ.count < UInt(respQCapacity - memLatency)
+
+  hitQ.deq.ready := canResp
+  respQ.enq.valid := ShiftRegister(canResp & hitQ.deq.valid, memLatency)
+  respQ.enq.bits.reqID := ShiftRegister(hitQ.deq.bits.reqID, memLatency)
+
+  // if there are multiple inp.vec elements per word, need to choose subword
+  if(elemsPerMemWord > 1) {
+    val mSubWord = hitQ.deq.bits.offs & UInt(elemsPerMemWord - 1)
+    val subWord = ShiftRegister(mSubWord, memLatency)
+    val wordStart = subWord * UInt(p.valWidth)
+    val wordEnd = ((subWord + UInt(1)) * UInt(p.valWidth)) - UInt(1)
+    respQ.enq.bits.data := readPort.rsp.readData(wordEnd, wordStart)
+  } else {
+    respQ.enq.bits.data := readPort.rsp.readData
+  }
 
   // TODO issue loads
   // TODO handle load responses -- remove from loading, add to cached, cacheLines
