@@ -19,6 +19,9 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val numCacheTxns = numReadTxns + 2
   val numLines = 4
 
+  if(!isPow2(numLines))
+    throw new Exception("Cache lines must be power of two")
+
   val burstCount = 8
   val bytesPerMemWord = (p.mrp.dataWidth / 8)
   val bytesPerLine = bytesPerMemWord * burstCount
@@ -116,11 +119,17 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
 
   // "lazy dataflow" shuffler for the requests -- TODO
+  // until this is in place, the cache will be blocking
 
-  // CAM schedulers for keeping the current cache status
-  val cached = Module(new CAM(numLines, numTagBits)).io
-  val loading = Module(new CAM(numReadTxns, numTagBits)).io
-  val regMemWordsLeft = Vec.fill(numReadTxns) {Reg(init=UInt(0, 4))}
+  // scheduler for keeping the current cache status
+
+  // also serves as a "valid" indicator for each line
+  // TODO zero out all these upon init
+  val regWordsInLine = Vec.fill(numLines) {Reg(init=UInt(0, log2Up(burstCount)))}
+  // the current tag stored in each line, content-searchable
+  val regTags = Vec.fill(numLines) {Reg(init=UInt(0, numTagBits))}
+  // counter for round robin replacement -- who to replace?
+  val regReplaceInd = Reg(init = UInt(0, log2Up(numLines)))
 
   // data storage
   val memLatency = 1
@@ -141,22 +150,35 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   //   - if not found in loading requests, issue load and add entry
   //   - if found in loading requests, do nothing
 
-  cached.tag := reqQ.deq.bits.tag
-  // cache miss indicator
-  val cacheMiss = reqQ.deq.valid & !cached.hit
+  /* TODO need to reverse map results? */
+  val lineReady = Vec(regWordsInLine.map(x => x === UInt(burstCount))).toBits
+  val lookupTag = UInt(width = numTagBits)  // set this signal to do tag lookup
+  val tagMatch = Vec(regTags.map(x => x === lookupTag)).toBits
+  val tagFound = tagMatch.orR
+  val tagHit = (tagMatch & lineReady).orR
+  val tagHitPos = PriorityEncoder(tagHit)
+
+  /* TODO resolve simultaneous hit + replacement situations
+    e.g same line read in progress + selected for replacement
+  */
 
   // cache hit & return data =================================================
+  lookupTag := reqQ.deq.bits.tag
+
+  // cache miss and hit indicators
+  val cacheHit = reqQ.deq.valid & tagHit
+  val cacheMiss = reqQ.deq.valid & !tagHit
 
   val hitQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
 
-  hitQ.enq.bits.lineNum := PriorityEncoder(cached.hits)
+  hitQ.enq.bits.lineNum := tagHitPos
   hitQ.enq.bits.reqID := reqQ.deq.bits.reqID
   hitQ.enq.bits.offs := reqQ.deq.bits.offs
   // only pop from reqQ when cache hit
-  hitQ.enq.valid := reqQ.deq.valid & cached.hit
-  reqQ.deq.ready := hitQ.enq.ready & cached.hit
+  hitQ.enq.valid := reqQ.deq.valid & tagHit
+  reqQ.deq.ready := hitQ.enq.ready & tagHit
 
-  // TODO handshake over latency to fetch data and put into respQ
+  // handshake over latency to fetch data and put into respQ
   // hitQ -> [mem] -> respQ
   val mAddrBase = hitQ.deq.bits.lineNum * UInt(burstCount)
   val mAddrOffs = hitQ.deq.bits.offs / UInt(elemsPerMemWord)
@@ -179,36 +201,49 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     respQ.enq.bits.data := readPort.rsp.readData
   }
 
-  /* TODO resolve simultaneous hit + evict situations */
-
   // cache miss: issue load requests ==========================================
-  /* TODO timing: can add a queue to keep the miss requests -- right now the
-  // load info is taken directly from the head of reqQ */
-  loading.tag := reqQ.deq.bits.tag
-  loading.write := Bool(false)
-  loading.write_tag := reqQ.deq.bits.tag
-  val alreadyLoading = loading.hit
+
   // able to issue a load to main memory
   val mreq = io.mainMem.memRdReq
-  val canDoLoad = loading.hasFree & mreq.ready
+  val canDoLoad = mreq.ready  // TODO further restrict # outstanding loads?
 
   // set up defaults for the main memory read requests
   mreq.valid := Bool(false)
-  mreq.bits.channelID := loading.freeInd + UInt(chanIDBase)
+  mreq.bits.channelID := regReplaceInd + UInt(chanIDBase)
   mreq.bits.isWrite := Bool(false)
   mreq.bits.addr := io.contextBase + reqQ.deq.bits.tag * UInt(bytesPerLine)
   mreq.bits.numBytes := UInt(bytesPerLine)
   mreq.bits.metaData := UInt(0)
 
-  when(cacheMiss & !alreadyLoading & canDoLoad) {
-    mreq.valid := Bool(true)
-    // fill the loading scheduler and add #words left info in reg
-    loading.write := Bool(true)
-    regMemWordsLeft(loading.freeInd) := UInt(burstCount)
+  // trigger load request and set replacement info when possible
+  // why !tagFound? --> don't want a duplicate load
+  when(cacheMiss & !tagFound & canDoLoad) {
+    mreq.valid := Bool(true)        // issue load req to main mem
+    // prepare structures for handling the received data
+    regWordsInLine(regReplaceInd) := UInt(0)  // marks line as invalid/in-progr.
+    regTags(regReplaceInd) := reqQ.deq.bits.tag // tag of line being rcvd
+    // round robin replacement counter -- will eventually wraparound to zero
+    regReplaceInd := regReplaceInd + UInt(1)
   }
 
+  // replacement: handle load responses & enter into cache ====================
+  val mrsp = io.mainMem.memRdRsp
+  val mrspID = mrsp.bits.channelID - UInt(chanIDBase)
+  val rspsReceived = regWordsInLine(mrspID)
 
-  // TODO handle load responses -- remove from loading, add to cached, cacheLines
+  // prepare for BRAM write: set up address and data
+  val wAddrBase = mrspID * UInt(burstCount)
+  val wAddrOffs = rspsReceived
+  writePort.req.addr := wAddrBase + wAddrOffs
+  writePort.req.writeData := mrsp.bits.readData
+
+  /* TODO prevent rcving data if this ID is currently being read (hit) */
+  mrsp.ready := Bool(true)  // always ready to accept mem.rsp. for now
+
+  when(mrsp.valid) {
+    writePort.req.writeEn := Bool(true) // enable write to cache mem
+    rspsReceived := rspsReceived + UInt(1)  // increment response counter
+  }
 
 }
 
