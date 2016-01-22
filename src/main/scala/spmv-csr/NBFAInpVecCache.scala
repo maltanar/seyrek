@@ -7,7 +7,7 @@ import TidbitsOCM._
 
 // a nonblocking, fully associative cache for serving input vector load reqs.
 
-class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
+class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) {
   val inOrder = false
 
   // TODO parametrize
@@ -120,6 +120,7 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   // CAM schedulers for keeping the current cache status
   val cached = Module(new CAM(numLines, numTagBits)).io
   val loading = Module(new CAM(numReadTxns, numTagBits)).io
+  val regMemWordsLeft = Vec.fill(numReadTxns) {Reg(init=UInt(0, 4))}
 
   // data storage
   val memLatency = 1
@@ -134,20 +135,26 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
   readPort.req.writeEn := Bool(false)
   writePort.req.writeEn := Bool(false)
 
-  // TODO check issued request against cached
+  // check issued request against cached and loading:
   // - if hit, return requested data
-  // - if miss, put into waitQ and check loading requests
+  // - if miss, check loading requests
   //   - if not found in loading requests, issue load and add entry
   //   - if found in loading requests, do nothing
 
   cached.tag := reqQ.deq.bits.tag
+  // cache miss indicator
+  val cacheMiss = reqQ.deq.valid & !cached.hit
+
+  // cache hit & return data =================================================
 
   val hitQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
 
   hitQ.enq.bits.lineNum := PriorityEncoder(cached.hits)
   hitQ.enq.bits.reqID := reqQ.deq.bits.reqID
   hitQ.enq.bits.offs := reqQ.deq.bits.offs
+  // only pop from reqQ when cache hit
   hitQ.enq.valid := reqQ.deq.valid & cached.hit
+  reqQ.deq.ready := hitQ.enq.ready & cached.hit
 
   // TODO handshake over latency to fetch data and put into respQ
   // hitQ -> [mem] -> respQ
@@ -172,7 +179,35 @@ class NBFAInpVecCache(p: SeyrekParams) extends InpVecLoader(p) {
     respQ.enq.bits.data := readPort.rsp.readData
   }
 
-  // TODO issue loads
+  /* TODO resolve simultaneous hit + evict situations */
+
+  // cache miss: issue load requests ==========================================
+  /* TODO timing: can add a queue to keep the miss requests -- right now the
+  // load info is taken directly from the head of reqQ */
+  loading.tag := reqQ.deq.bits.tag
+  loading.write := Bool(false)
+  loading.write_tag := reqQ.deq.bits.tag
+  val alreadyLoading = loading.hit
+  // able to issue a load to main memory
+  val mreq = io.mainMem.memRdReq
+  val canDoLoad = loading.hasFree & mreq.ready
+
+  // set up defaults for the main memory read requests
+  mreq.valid := Bool(false)
+  mreq.bits.channelID := loading.freeInd + UInt(chanIDBase)
+  mreq.bits.isWrite := Bool(false)
+  mreq.bits.addr := io.contextBase + reqQ.deq.bits.tag * UInt(bytesPerLine)
+  mreq.bits.numBytes := UInt(bytesPerLine)
+  mreq.bits.metaData := UInt(0)
+
+  when(cacheMiss & !alreadyLoading & canDoLoad) {
+    mreq.valid := Bool(true)
+    // fill the loading scheduler and add #words left info in reg
+    loading.write := Bool(true)
+    regMemWordsLeft(loading.freeInd) := UInt(burstCount)
+  }
+
+
   // TODO handle load responses -- remove from loading, add to cached, cacheLines
 
 }
