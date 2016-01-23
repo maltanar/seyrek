@@ -31,6 +31,7 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   val numOffsBits = log2Up(elemsPerLine)
   val numTagBits = p.indWidth - numOffsBits
+  val invalidTag = Fill(numTagBits, UInt(1, 1)) // all 1s is the invalid tag
   val cacheReqID = UInt(width = log2Up(numCacheTxns))
   // this is what gets carried around the cache
   class CacheReq extends Bundle {
@@ -125,12 +126,12 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   // also serves as a "valid" indicator for each line
   // TODO zero out all these upon init
-  val regWordsInLine = Vec.fill(numLines) {Reg(init=UInt(0, log2Up(burstCount)))}
+  val regWordsInLine = Vec.fill(numLines) {Reg(init=UInt(0, 1+log2Up(burstCount)))}
   // # hits in progress for this cacheline, to avoid replacing data while
   // this line is occupied
   val regHitsInProgress = Vec.fill(numLines) {Reg(init=UInt(0, 3))}
   // the current tag stored in each line, content-searchable
-  val regTags = Vec.fill(numLines) {Reg(init=UInt(0, numTagBits))}
+  val regTags = Vec.fill(numLines) {Reg(init = invalidTag)}
   // counter for round robin replacement -- who to replace?
   val regReplaceInd = Reg(init = UInt(0, log2Up(numLines)))
 
