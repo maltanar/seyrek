@@ -130,6 +130,19 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   // # hits in progress for this cacheline, to avoid replacing data while
   // this line is occupied
   val regHitsInProgress = Vec.fill(numLines) {Reg(init=UInt(0, 3))}
+  val addHit = Bits(width = numLines)
+  val rmvHit = Bits(width = numLines)
+  addHit := Bits(0, numLines)
+  rmvHit := Bits(0, numLines)
+  for(i <- 0 until numLines) {
+    when(addHit(i) & !rmvHit(i)) {
+      regHitsInProgress(i) := regHitsInProgress(i) + UInt(1)
+    } .elsewhen(!addHit(i) & rmvHit(i)) {
+      regHitsInProgress(i) := regHitsInProgress(i) - UInt(1)
+    }
+  }
+
+  val regProtect = Reg(init = Bits(0, numLines))
   // the current tag stored in each line, content-searchable
   val regTags = Vec.fill(numLines) {Reg(init = invalidTag)}
   // counter for round robin replacement -- who to replace?
@@ -180,8 +193,7 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   // increment hit-in-progress counter for this line
   when(hitQ.enq.valid & hitQ.enq.ready) {
-    val hitsToLine = regHitsInProgress(hitQ.enq.bits.lineNum)
-    hitsToLine := hitsToLine + UInt(1)
+    addHit := UIntToOH(hitQ.enq.bits.lineNum)
   }
 
   // handshake over latency to fetch data and put into respQ
@@ -210,8 +222,7 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   // decrement hit-in-progress counter for this line
   when(respQ.enq.valid & respQ.enq.ready) {
-    val hitsToLine = regHitsInProgress(respLine)
-    hitsToLine := hitsToLine - UInt(1)
+    rmvHit := UIntToOH(respLine)
   }
 
   // cache miss: issue load requests ==========================================
@@ -254,6 +265,21 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   when(mrsp.valid & mrsp.ready) {
     writePort.req.writeEn := Bool(true) // enable write to cache mem
     rspsReceived := rspsReceived + UInt(1)  // increment response counter
+  }
+
+  // debugging ================================================================
+  val verboseDebug = false
+  if(verboseDebug) {
+    printf("=========================================================== \n")
+    printf("tags: \n")
+    for(i <- 0 until numLines) printf("%d ", regTags(i))
+    printf("\n")
+    printf("words in line: \n")
+    for(i <- 0 until numLines) printf("%d ", regWordsInLine(i))
+    printf("\n")
+    printf("#hits to line in progress: \n")
+    for(i <- 0 until numLines) printf("%d ", regHitsInProgress(i))
+    printf("\n")
   }
 
 }
