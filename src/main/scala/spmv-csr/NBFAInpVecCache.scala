@@ -152,7 +152,7 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val memLatency = 1
   // TODO set to a large number to ensure BRAM gen -- real # words probably
   // too shallow to be mapped into a BRAM
-  val mem = Module(new DualPortBRAM(1024, bytesPerMemWord*8)).io
+  val mem = Module(new DualPortBRAM(10, bytesPerMemWord*8)).io
   // for reading cachelines to respond to requests
   val readPort = mem.ports(0)
   // for writing retrieved cachelines into memory
