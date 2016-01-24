@@ -173,7 +173,7 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val tagMatch = Vec(regTags.map(x => x === lookupTag)).toBits
   val tagFound = tagMatch.orR
   val tagHit = (tagMatch & lineReady).orR
-  val tagHitPos = PriorityEncoder(tagHit)
+  val tagHitPos = PriorityEncoder(tagMatch)
 
   // cache hit & return data =================================================
   lookupTag := reqQ.deq.bits.tag
@@ -280,6 +280,24 @@ class NBFAInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     printf("#hits to line in progress: \n")
     for(i <- 0 until numLines) printf("%d ", regHitsInProgress(i))
     printf("\n")
+    when(reqQ.enq.valid & reqQ.enq.ready) {
+      printf("added to reqQ : id %d tag %d offs %d \n",
+      reqQ.enq.bits.reqID, reqQ.enq.bits.tag, reqQ.enq.bits.offs)
+    }
+    when(hitQ.enq.valid & hitQ.enq.ready) {
+      printf("added to hitQ : id %d tag %d offs %d line %d \n",
+      hitQ.enq.bits.reqID, lookupTag, hitQ.enq.bits.offs, hitQ.enq.bits.lineNum)
+    }
+    when(respQ.enq.ready & respQ.enq.valid) {
+      printf("added to respQ: id %d data %d\n",
+      respQ.enq.bits.reqID, respQ.enq.bits.data)
+    }
+    when(mreq.valid & mreq.ready) {
+      printf("new miss, into line %d \n", regReplaceInd)
+    }
+    when(mrsp.valid & mrsp.ready) {
+      printf("new read resp, line %d rcvd %d \n", mrspID, rspsReceived)
+    }
   }
 
 }
