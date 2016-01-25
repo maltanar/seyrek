@@ -86,6 +86,10 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
       // access to main memory for issuing load requests
       val mainMem = new GenericMemoryMasterPort(p.mrp)
     }
+    // shorthands for main memory access
+    val mreq = io.mainMem.memRdReq
+    val mrsp = io.mainMem.memRdRsp
+
     // miss queues, where the misses wait for the load to complete
     val missQ = Vec.fill(txns) {
       Module(new FPGAQueue(cacheReq, 4)).io
@@ -97,13 +101,25 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // registers for keeping the status of each miss load
     val loadValid = Reg(init = Bits(0, txns))
-    val loadID = Vec.fill(txns) {Reg(init = UInt(0, log2Up(txns)))}
     val loadLine = Vec.fill(txns) {Reg(init = UInt(0, numIndBits))}
     val loadTag = Vec.fill(txns) {Reg(init = UInt(0, numTagBits))}
     val loadPrg = Vec.fill(txns) {Reg(init = UInt(0, 1+log2Up(burstCount)))}
 
     val hasFreeSlot = orR(~loadValid)
-    val freeSlotInd = PriorityEncoder(~loadValid)
+    val freePos = PriorityEncoder(~loadValid)
+    val doAdd = Bool()
+    val doClr = Bool()
+    val clrPos = UInt(width = log2Up(txns))
+    doAdd := Bool(false)
+    doClr := Bool(false)
+
+    // produce masks to allow simultaneous write+clear
+    val writeMask = Mux(doAdd, UIntToOH(freePos), Bits(0, txns))
+    val clearMask = Mux(doClr, ~(UIntToOH(clrPos)), ~Bits(0, txns))
+
+    loadValid := (loadValid | writeMask) & clearMask
+
+    // ========================================================================
 
     // check incoming misses for line conflicts and tag match
     val missHead = io.misses.bits
@@ -114,23 +130,68 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val isExisting = Vec(tagMatch).toBits.orR
 
     // conflicts cannot enter, even if there is a free slot
-    io.misses.ready := isExisting | (!isConflict & hasFreeSlot)
+    val canEnter = isExisting | (!isConflict & hasFreeSlot)
+    io.misses.ready := canEnter & missQEnq.ready & mreq.ready
+
+    // move accepted miss into appropriate miss queue
+    missQEnq.valid := io.misses.valid & canEnter
+    missQEnq.bits := missHead
+    missQEnqSel := Mux(isExisting, tagMatchPos, freePos)
+
+    // prepare for issuing mem req for the missed cacheline
+    mreq.valid := doAdd & !isExisting
+    mreq.bits.channelID := UInt(chanIDBase) + freePos
+    mreq.bits.isWrite := Bool(false)
+    val theLine = Cat(missHead.tag, missHead.lineNum)
+    mreq.bits.addr := io.contextBase + theLine * UInt(bytesPerLine)
+    mreq.bits.numBytes := UInt(bytesPerLine)
+    mreq.bits.metaData := UInt(0)
 
     when(io.misses.ready & io.misses.valid & !isExisting) {
       // add new miss entry into the table
-      // TODO issue load request to main memory
+      // TODO write into CAM
+      doAdd := Bool(true)
+      loadLine(freePos) := missHead.lineNum
+      loadTag(freePos) := missHead.tag
+      loadPrg(freePos) := UInt(0)
     }
 
-    // TODO move accepted miss into appropriate miss queue
+    // =======================================================================
+    // handle read responses from main memory
+    val mrspID = mrsp.bits.channelID - UInt(chanIDBase)
+    val rspsReceived = loadPrg(mrspID)
+    // signal ready to memRdRsp if line is not in use
+    io.lineToCheck := loadLine(mrspID)
+    mrsp.ready := !io.isLineInUse
+    // set up tag write
+    io.tagWritePort.req.writeEn := Bool(false)
+    io.tagWritePort.req.addr := loadLine(mrspID)
+    io.tagWritePort.req.writeData := Cat(Bool(false), loadTag(mrspID))
+    // set up data write
+    io.dataWritePort.req.writeEn := Bool(false)
+    val wAddrBase = mrspID * UInt(burstCount)
+    val wAddrOffs = rspsReceived
+    io.dataWritePort.req.addr := wAddrBase + wAddrOffs
+    io.dataWritePort.req.writeData := mrsp.bits.readData
+    clrPos := mrspID
 
-    // TODO produce masks for write & clear, and update valid bits
+    when(mrsp.ready & mrsp.valid) {
+      // activate data write
+      io.dataWritePort.req.writeEn := Bool(true)
+      when(rspsReceived === UInt(0)) {
+        // write valid = 0 when first response received
+        io.tagWritePort.req.writeEn := Bool(true)
+      } .elsewhen(rspsReceived === UInt(burstCount-1)) {
+        // last burst beat received -- data is now valid
+        io.tagWritePort.req.writeEn := Bool(true)
+        io.tagWritePort.req.writeData := Cat(Bool(true), loadTag(mrspID))
+      }
+    }
 
-    // TODO handle read responses from main memory
 
-    // TODO write valid = 0 when first response received
-    // TODO remove load entry when all responses received
+    // TODO remove load entry when all responses received, set clrPos
     // TODO drain miss queue when all responses are received
-
+    // TODO how to ensure that draining is finished?
   }
 
   // ==========================================================================
