@@ -26,17 +26,18 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val bytesPerElem = p.valWidth / 8
   val elemsPerLine = bytesPerLine / bytesPerElem
   val elemsPerMemWord = bytesPerMemWord / bytesPerElem
+  val bitsPerLine = bytesPerLine * 8
 
   val numOffsBits = log2Up(elemsPerLine)
-  val numLineBits = log2Up(numLines)
-  val numTagBits = p.indWidth - (numOffsBits + numLineBits)
+  val numIndBits = log2Up(numLines)
+  val numTagBits = p.indWidth - (numOffsBits + numIndBits)
 
   // cache internal types
   class CacheReq extends Bundle {
     // cache internal ID
     val reqID = UInt(width = log2Up(numCacheTxns))
     // line number
-    val lineNum = UInt(width = numLineBits)
+    val lineNum = UInt(width = numIndBits)
     // line tag
     val tag = UInt(width = numTagBits)
     // word offset in line
@@ -60,11 +61,77 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     override def cloneType: this.type = new CacheRsp().asInstanceOf[this.type]
   }
+
   // cloneTypes for internal types
   val cacheRsp = new CacheRsp()
   val cacheReqID = UInt(width = log2Up(numCacheTxns))
   val cacheReq = new CacheReq()
   val cacheTagRsp = new CacheTagRsp()
+
+  // miss handler -- TODO spearate out as own external module?
+  class MissHandler(txns: Int) extends Module {
+    val io = new Bundle {
+      // incoming misses
+      val misses = Decoupled(cacheReq).flip
+      // resolved requests
+      val resolved = Decoupled(cacheReq)
+      // pointer to start of x
+      val contextBase = UInt(INPUT, width = p.mrp.addrWidth)
+      // access to tag and data memories
+      val tagWritePort = new OCMMasterIF(numTagBits+1, numTagBits+1, numIndBits)
+      val dataWritePort = new OCMMasterIF(bitsPerLine, bitsPerLine, numIndBits)
+      // checking against in-progress hits to lines
+      val lineToCheck = UInt(OUTPUT, numIndBits)
+      val isLineInUse = Bool(INPUT)
+      // access to main memory for issuing load requests
+      val mainMem = new GenericMemoryMasterPort(p.mrp)
+    }
+    // miss queues, where the misses wait for the load to complete
+    val missQ = Vec.fill(txns) {
+      Module(new FPGAQueue(cacheReq, 4)).io
+    }
+    val missQEnqSel = UInt(width = log2Up(txns))
+    val missQEnq = DecoupledInputMux(missQEnqSel, missQ.map(x => x.enq))
+    val missQDeqSel = UInt(width = log2Up(txns))
+    val missQDeq = DecoupledOutputDemux(missQDeqSel, missQ.map(x => x.deq))
+
+    // registers for keeping the status of each miss load
+    val loadValid = Reg(init = Bits(0, txns))
+    val loadID = Vec.fill(txns) {Reg(init = UInt(0, log2Up(txns)))}
+    val loadLine = Vec.fill(txns) {Reg(init = UInt(0, numIndBits))}
+    val loadTag = Vec.fill(txns) {Reg(init = UInt(0, numTagBits))}
+    val loadPrg = Vec.fill(txns) {Reg(init = UInt(0, 1+log2Up(burstCount)))}
+
+    val hasFreeSlot = orR(~loadValid)
+    val freeSlotInd = PriorityEncoder(~loadValid)
+
+    // check incoming misses for line conflicts and tag match
+    val missHead = io.misses.bits
+    val lineMatch = (0 until txns).map(i => loadLine(i) === missHead.lineNum & loadValid(i))
+    val tagMatch = (0 until txns).map(i => loadTag(i) === missHead.tag & loadValid(i))
+    val tagMatchPos = PriorityEncoder(Vec(tagMatch).toBits)
+    val isConflict = Vec(lineMatch).toBits.orR
+    val isExisting = Vec(tagMatch).toBits.orR
+
+    // conflicts cannot enter, even if there is a free slot
+    io.misses.ready := isExisting | (!isConflict & hasFreeSlot)
+
+    when(io.misses.ready & io.misses.valid & !isExisting) {
+      // add new miss entry into the table
+      // TODO issue load request to main memory
+    }
+
+    // TODO move accepted miss into appropriate miss queue
+
+    // TODO produce masks for write & clear, and update valid bits
+
+    // TODO handle read responses from main memory
+
+    // TODO write valid = 0 when first response received
+    // TODO remove load entry when all responses received
+    // TODO drain miss queue when all responses are received
+
+  }
 
   // ==========================================================================
 
@@ -77,8 +144,8 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   def makeCacheReq(rq: ValIndInd, rid: UInt): CacheReq = {
     val cr = new CacheReq()
     cr.reqID := rid
-    cr.tag := rq.j(p.indWidth-1, numOffsBits + numLineBits)
-    cr.lineNum := rq.j(numOffsBits + numLineBits - 1, numOffsBits)
+    cr.tag := rq.j(p.indWidth-1, numOffsBits + numIndBits)
+    cr.lineNum := rq.j(numOffsBits + numIndBits - 1, numOffsBits)
     cr.offs := rq.j(numOffsBits-1, 0)
     cr
   }
@@ -123,7 +190,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   // structures for keeping the cache state
   // TODO initialize tag and valid bits when in init mode
   // tags and valid bits
-  val tagStore = Module(new DualPortBRAM(numLineBits, 1 + numTagBits)).io
+  val tagStore = Module(new DualPortBRAM(numIndBits, 1 + numTagBits)).io
   val tagLat = 1
   val tagRead = tagStore.ports(0)
   val tagWrite = tagStore.ports(1)
@@ -132,7 +199,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   tagWrite.req.writeEn := Bool(false)
 
   // cacheline data
-  val datStore = Module(new DualPortBRAM(numLineBits, bytesPerMemWord * 8)).io
+  val datStore = Module(new DualPortBRAM(numIndBits, bitsPerLine)).io
   val datLat = 1
   val datRead = datStore.ports(0)
   val datWrite = datStore.ports(1)
@@ -140,10 +207,16 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   datRead.req.writeEn := Bool(false)
   datWrite.req.writeEn := Bool(false)
 
-  // TODO structure for tracking in-flight misses
+  // structure for tracking in-flight load requests
+  // TODO
+
+  // pending misses will be collected in these queues
+  val pendingMiss = Vec.fill(numReadTxns) {
+    Module(new FPGAQueue(cacheRsp, 4)).io
+  }
 
   // for tracking in-flight hits; these lines should not be written to
-  val pendingLineHits = Module(new SearchableQueue(UInt(width = numLineBits), 4)).io
+  val pendingLineHits = Module(new SearchableQueue(UInt(width = numIndBits), 4)).io
 
   // queues for storing intermediate results
   val tagRespQ = Module(new FPGAQueue(cacheTagRsp, tagLat + 2)).io
