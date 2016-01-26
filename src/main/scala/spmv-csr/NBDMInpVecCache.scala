@@ -50,20 +50,13 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val isHit = Bool()
     // data from original req:
     val req = new CacheReq()
+    // response data if hit
+    val data = UInt(width = p.valWidth)
 
     override def cloneType: this.type = new CacheTagRsp().asInstanceOf[this.type]
   }
-  class CacheRsp extends Bundle {
-    // cache internal ID
-    val reqID = UInt(width = log2Up(numCacheTxns))
-    // response data
-    val data = UInt(width = p.valWidth)
-
-    override def cloneType: this.type = new CacheRsp().asInstanceOf[this.type]
-  }
 
   // cloneTypes for internal types
-  val cacheRsp = new CacheRsp()
   val cacheReqID = UInt(width = log2Up(numCacheTxns))
   val cacheReq = new CacheReq()
   val cacheTagRsp = new CacheTagRsp()
@@ -226,12 +219,12 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   // responses ready to be processed
   val respQCapacity = 4
-  val respQ = Module(new FPGAQueue(cacheRsp, respQCapacity)).io
+  val respQ = Module(new FPGAQueue(cacheTagRsp, respQCapacity)).io
 
   val readyResps = Module(new StreamFork(
-    genIn = cacheRsp, genA = cacheReqID, genB = p.wu,
-    forkA = {a: CacheRsp => a.reqID},
-    forkB = {a: CacheRsp =>
+    genIn = cacheTagRsp, genA = cacheReqID, genB = p.wu,
+    forkA = {a: CacheTagRsp => a.req.reqID},
+    forkB = {a: CacheTagRsp =>
       val newWU = new WorkUnit(p.valWidth, p.indWidth)
       newWU.vectorVal := a.data
       // other WU elements will be fetched from the cloakroom
@@ -244,8 +237,8 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   readyResps.outB <> io.loadRsp
 
   // retrieve rowInd and matrixVal upon exit
-  io.loadRsp.bits.rowInd := cloakroom(readyResps.in.bits.reqID).i
-  io.loadRsp.bits.matrixVal := cloakroom(readyResps.in.bits.reqID).v
+  io.loadRsp.bits.rowInd := cloakroom(readyResps.in.bits.req.reqID).i
+  io.loadRsp.bits.matrixVal := cloakroom(readyResps.in.bits.req.reqID).v
 
   // ==========================================================================
   // structures for keeping the cache state
@@ -268,78 +261,66 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   datRead.req.writeEn := Bool(false)
   datWrite.req.writeEn := Bool(false)
 
-  // structure for tracking in-flight load requests
-  // TODO
-
-  // pending misses will be collected in these queues
-  val pendingMiss = Vec.fill(numReadTxns) {
-    Module(new FPGAQueue(cacheRsp, 4)).io
-  }
-
   // for tracking in-flight hits; these lines should not be written to
   val pendingLineHits = Module(new SearchableQueue(UInt(width = numIndBits), 4)).io
 
   // queues for storing intermediate results
+  if(tagLat != datLat)
+    throw new Exception("tag latency != data latency, needs fix")
+  // TODO tagRespQ size should be max(tagLat, datLat) + 2
   val tagRespQ = Module(new FPGAQueue(cacheTagRsp, tagLat + 2)).io
-  val hitQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
   val missQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
 
   // ==========================================================================
   // tag lookup logic
 
-  // direct-mapped tag lookup with handshaking over latency
+  // direct-mapped tag+data lookup with handshaking over latency
+  // tag memory addrs have 1:1 correspondence with lines
   tagRead.req.addr := reqQ.deq.bits.lineNum
+  // ...but a line spans several elements of the data memory
+  val mAddrBase = reqQ.deq.bits.lineNum * UInt(burstCount)
+  val mAddrOffs = reqQ.deq.bits.offs / UInt(elemsPerMemWord)
+  datRead.req.addr := mAddrBase + mAddrOffs
+
+  val canReadTag = tagRespQ.count < UInt(2)
+
   val origReq = ShiftRegister(reqQ.deq.bits, tagLat)
+
   val tagMatch = tagRead.rsp.readData(numTagBits-1, 0) === origReq.tag
   val tagValid = tagRead.rsp.readData(numTagBits)
   val tagHit = tagMatch & tagValid
 
-  val canReadTag = tagRespQ.count < UInt(2)
+  // set up connections to the tagRespQ enq.
   tagRespQ.enq.valid := ShiftRegister(canReadTag & reqQ.deq.valid, tagLat)
   tagRespQ.enq.bits.isHit := tagHit
   tagRespQ.enq.bits.req := origReq
+
+  // data read is slightly trickier
+  // if there are multiple inp.vec elements per word, need to choose subword
+  if(elemsPerMemWord > 1) {
+    val subWord = origReq.offs & UInt(elemsPerMemWord - 1)
+    val wordStart = subWord * UInt(p.valWidth)
+    val wordEnd = ((subWord + UInt(1)) * UInt(p.valWidth)) - UInt(1)
+    tagRespQ.enq.bits.data := datRead.rsp.readData(wordEnd, wordStart)
+  } else {
+    tagRespQ.enq.bits.data := datRead.rsp.readData
+  }
 
   // add to pending hits when there is a hit
   val isNewHit = tagRespQ.enq.valid & tagRespQ.enq.ready & tagHit
   pendingLineHits.enq.valid := isNewHit
   pendingLineHits.enq.bits := origReq.lineNum
 
-  // route tag lookup output into appropriate queues
-  val tagRespDest = Seq(missQ.enq, hitQ.enq)
+  // route tag lookup output into appropriate queue
+  val tagRespDest = Seq(missQ.enq, respQ.enq)
   tagRespQ.deq <> DecoupledOutputDemux(tagRespQ.deq.bits.isHit, tagRespDest)
 
-  // supply cache hits
-  // ==========================================================================
-
-  // handshake over latency to fetch data and put into respQ
-  // hitQ -> [mem] -> respQ
-  val mAddrBase = hitQ.deq.bits.req.lineNum * UInt(burstCount)
-  val mAddrOffs = hitQ.deq.bits.req.offs / UInt(elemsPerMemWord)
-  datRead.req.addr := mAddrBase + mAddrOffs
-
-  val canResp = respQ.count < UInt(respQCapacity - datLat)
-  val origTagRspReq = ShiftRegister(hitQ.deq.bits.req, datLat)
-
-  hitQ.deq.ready := canResp
-  respQ.enq.valid := ShiftRegister(canResp & hitQ.deq.valid, datLat)
-  respQ.enq.bits.reqID := origTagRspReq.reqID
-
-  // if there are multiple inp.vec elements per word, need to choose subword
-  if(elemsPerMemWord > 1) {
-    val subWord = origTagRspReq.offs & UInt(elemsPerMemWord - 1)
-    val wordStart = subWord * UInt(p.valWidth)
-    val wordEnd = ((subWord + UInt(1)) * UInt(p.valWidth)) - UInt(1)
-    respQ.enq.bits.data := datRead.rsp.readData(wordEnd, wordStart)
-  } else {
-    respQ.enq.bits.data := datRead.rsp.readData
-  }
-
-  // decrement hit-in-progress counter for this line
+  // decrement hit-in-progress counter for this line when hit
   pendingLineHits.deq.ready := respQ.enq.valid & respQ.enq.ready
 
   // sanity check: dequeued pending hit line and actually read line must match
   when(respQ.enq.valid & respQ.enq.ready) {
-    when(pendingLineHits.deq.bits != origTagRspReq.lineNum) {
+    when(pendingLineHits.deq.bits != respQ.enq.bits.req.lineNum) {
       printf("***ERROR! mismatch between expected and queued hit line #\n ")
     }
   }
