@@ -89,7 +89,6 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   // requets ready to be processed
   val reqQ = Module(new FPGAQueue(cacheReq, 4)).io
-  readyReqs <> reqQ.enq
 
   // responses ready to be processed
   val respQCapacity = 4
@@ -144,6 +143,25 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   // TODO tagRespQ size should be max(tagLat, datLat) + 2
   val tagRespQ = Module(new FPGAQueue(cacheTagRsp, tagLat + 2)).io
   val missQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
+
+  // miss handler
+  val missHandler = Module(new MissHandler(numReadTxns)).io
+  missHandler.misses.valid := missQ.deq.valid
+  missHandler.misses.bits := missQ.deq.bits.req
+  missHandler.contextBase := io.contextBase
+  missHandler.tagPort <> tagWrite
+  missHandler.dataPort <> datWrite
+  pendingLineHits.searchVal := missHandler.lineToCheck
+  missHandler.isLineInUse := pendingLineHits.foundVal
+  missHandler.mainMem <> io.mainMem
+
+  // mix in resolved requests into the request stream
+  // TODO use own cache port for resolving requests?
+  val reqMix = Module(new Arbiter(cacheReq, 2)).io
+  missHandler.resolved <> reqMix.in(0)
+  readyReqs <> reqMix.in(1)
+  reqMix.out <> reqQ.enq
+
 
   // ==========================================================================
   // tag lookup logic
@@ -202,6 +220,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     }
   }
 
+  //==========================================================================
   // miss handler -- TODO spearate out as own external module?
   class MissHandler(txns: Int) extends Module {
     val io = new Bundle {
