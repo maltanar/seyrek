@@ -15,6 +15,24 @@ class RowMajorFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val results = Decoupled(p.vi)
 }
 
+class DummyRowMajorFrontend(p: SeyrekParams) extends Module {
+  val io = new RowMajorFrontendIO(p)
+
+  val seq = NaturalNumbers(p.indWidth, io.start, io.csr.rows)
+
+  io.results.valid := seq.valid
+  io.results.bits.value := seq.bits
+  io.results.bits.ind := seq.bits
+  seq.ready := io.results.ready
+
+  io.workUnits.ready := Bool(true)
+  io.rowLen.ready := Bool(true)
+
+  when(io.results.ready & io.results.valid & io.results.bits.ind === UInt(0)) {
+    printf("Warning: using dummy frontend\n")
+  }
+}
+
 class RowMajorFrontend(p: SeyrekParams) extends Module {
   val io = new RowMajorFrontendIO(p)
 
