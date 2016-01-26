@@ -262,9 +262,17 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     monitorStream("reqQ.enq", reqQ.enq)
     monitorStream("tagRespQ.enq", tagRespQ.enq)
     monitorStream("respQ.enq", respQ.enq)
-    monitorStream("miss.enq", missQ.enq)
+    monitorStream("missQ.enq", missQ.enq)
     monitorStream("missHandler enter", missHandler.misses)
     monitorStream("missHandler resolved", missHandler.resolved)
+
+    when(io.start & io.mode === SeyrekModes.START_REGULAR) {
+      printf("queue counts: \n")
+      printf("reqQ %d, tagRespQ %d, missQ %d, respQ %d \n",
+        reqQ.count, tagRespQ.count, missQ.count, respQ.count
+      )
+      printf("=================================================================\n")
+    }
   }
 
   //==========================================================================
@@ -294,6 +302,13 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     val mreq = mreqQ.enq
     val mrsp = mrspQ.deq
+
+    // queue for storing conflicting cache misses
+    val conflictQ = Module(new FPGAQueue(cacheReq, 16)).io
+    val mixMiss = Module(new Arbiter(cacheReq, 2)).io
+    io.misses <> mixMiss.in(0)
+    conflictQ.deq <> mixMiss.in(1)
+    val missHead = FPGAQueue(mixMiss.out, 2)
 
     // miss queues, where the misses wait for the load to complete
     /* IMPROVE replace these with a BRAM */
@@ -332,39 +347,45 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // ========================================================================
 
     // check incoming misses for line conflicts and tag match
-    val missHead = io.misses.bits
-    val lineMatch = Vec((0 until txns).map(i => loadLine(i) === missHead.lineNum & loadValid(i))).toBits
-    val tagMatch = Vec((0 until txns).map(i => loadTag(i) === missHead.tag & loadValid(i))).toBits
+    val lineMatch = Vec((0 until txns).map(i => loadLine(i) === missHead.bits.lineNum & loadValid(i))).toBits
+    val tagMatch = Vec((0 until txns).map(i => loadTag(i) === missHead.bits.tag & loadValid(i))).toBits
 
     val tagAndLineMatch = lineMatch & tagMatch & loadValid
     val isConflict = (lineMatch & ~tagMatch & loadValid).orR
     val isExisting = tagAndLineMatch.orR
     val hitPos = PriorityEncoder(tagAndLineMatch)
 
-    // conflicts cannot enter, even if there is a free slot
-    val canEnter = isExisting | (!isConflict & hasFreeSlot)
-    io.misses.ready := canEnter & missQEnq.ready & mreq.ready
+    // conflicts cannot enter, even if there is a free slot --
+    // they move into their own queue, called conflictQ, to wait
+    val canEnterAsNew = !isConflict & hasFreeSlot & missQEnq.ready & mreq.ready
+    val canEnterAsExisting = isExisting & missQEnq.ready
+    val canEnterAsConflict = isConflict & conflictQ.enq.ready
+
+    missHead.ready := canEnterAsConflict | canEnterAsNew | canEnterAsExisting
+
+    conflictQ.enq.valid := missHead.valid & isConflict
+    conflictQ.enq.bits := missHead.bits
 
     // move accepted miss into appropriate miss queue
-    missQEnq.valid := io.misses.valid & canEnter
-    missQEnq.bits := missHead
+    missQEnq.valid := missHead.valid & (canEnterAsNew | canEnterAsExisting)
+    missQEnq.bits := missHead.bits
     missQEnqSel := Mux(isExisting, hitPos, freePos)
 
     // prepare for issuing mem req for the missed cacheline
     mreq.valid := doAdd & !isExisting
     mreq.bits.channelID := UInt(chanIDBase) + freePos
     mreq.bits.isWrite := Bool(false)
-    val theLine = Cat(missHead.tag, missHead.lineNum)
+    val theLine = Cat(missHead.bits.tag, missHead.bits.lineNum)
     mreq.bits.addr := io.contextBase + theLine * UInt(bytesPerLine)
     mreq.bits.numBytes := UInt(bytesPerLine)
     mreq.bits.metaData := UInt(0)
 
-    when(io.misses.ready & io.misses.valid & !isExisting) {
+    when(missHead.ready & missHead.valid & !isExisting) {
       // add new miss entry into the table
       // write into CAM
       doAdd := Bool(true)
-      loadLine(freePos) := missHead.lineNum
-      loadTag(freePos) := missHead.tag
+      loadLine(freePos) := missHead.bits.lineNum
+      loadTag(freePos) := missHead.bits.tag
       loadPrg(freePos) := UInt(0)
     }
 
@@ -429,10 +450,10 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // debug
     val verboseDebug = true
     if(verboseDebug) {
-      when(io.misses.ready & io.misses.valid & !isExisting) {
+      when(missHead.ready & missHead.valid & !isExisting) {
         printf("New miss in handler: ")
         printf("miss id = %d line = %d tag = %d \n", freePos,
-        missHead.lineNum, missHead.tag)
+        missHead.bits.lineNum, missHead.bits.tag)
       }
 
       when(mrsp.ready & mrsp.valid) {

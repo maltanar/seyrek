@@ -30,7 +30,7 @@ extends GenericAccelerator(p) {
 
   for(i <- 0 until pSeyrek.numPEs) {
     val backend = Module(new RowMajorBackend(pSeyrek))
-    val frontend = Module(new RowMajorFrontend(pSeyrek))
+    val frontend = Module(new DummyRowMajorFrontend(pSeyrek))
     val ioPE = io.pe(i)
 
     backend.io.contextReqCnt := ioPE.contextReqCnt
