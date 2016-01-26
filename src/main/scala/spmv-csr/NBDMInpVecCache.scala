@@ -273,6 +273,9 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     loadValid := (loadValid | writeMask) & clearMask
 
+    // list of completed loads
+    val completedQ = Module(new FPGAQueue(UInt(width = log2Up(txns)), 4)).io
+
     // ========================================================================
 
     // check incoming misses for line conflicts and tag match
@@ -316,7 +319,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val rspsReceived = loadPrg(mrspID)
     // signal ready to memRdRsp if line is not in use
     io.lineToCheck := loadLine(mrspID)
-    mrsp.ready := !io.isLineInUse
+    mrsp.ready := !io.isLineInUse & completedQ.enq.ready
     // set up tag write
     io.tagPort.req.writeEn := Bool(false)
     io.tagPort.req.addr := loadLine(mrspID)
@@ -327,11 +330,15 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val wAddrOffs = rspsReceived
     io.dataPort.req.addr := wAddrBase + wAddrOffs
     io.dataPort.req.writeData := mrsp.bits.readData
-    clrPos := mrspID
+    // set up signals for completion
+    completedQ.enq.bits := mrspID
+    completedQ.enq.valid := Bool(false)
 
     when(mrsp.ready & mrsp.valid) {
       // activate data write
       io.dataPort.req.writeEn := Bool(true)
+      // increment progress counter
+      rspsReceived := rspsReceived + UInt(1)
       when(rspsReceived === UInt(0)) {
         // write valid = 0 when first response received
         io.tagPort.req.writeEn := Bool(true)
@@ -339,12 +346,27 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
         // last burst beat received -- data is now valid
         io.tagPort.req.writeEn := Bool(true)
         io.tagPort.req.writeData := Cat(Bool(true), loadTag(mrspID))
+        // signal completed, add mrspID to completedQ
+        completedQ.enq.valid := Bool(true)
       }
     }
 
+    // =======================================================================
+    // flush pending requests when load finished
+    val complHeadID = completedQ.deq.bits
 
-    // TODO remove load entry when all responses received, set clrPos
-    // TODO drain miss queue when all responses are received
-    // TODO how to ensure that draining is finished?
+    clrPos := complHeadID
+    missQDeqSel := complHeadID
+
+    io.resolved.valid := missQDeq.valid & completedQ.deq.valid
+    io.resolved.bits := missQDeq.bits
+    missQDeq.ready := io.resolved.ready & completedQ.deq.valid
+
+    completedQ.deq.ready := Bool(false)
+
+    when(completedQ.deq.valid & missQ(complHeadID).count === UInt(0)) {
+      completedQ.deq.ready := Bool(true)
+      doClr := Bool(true)
+    }
   }
 }
