@@ -123,7 +123,19 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val tagWrite = tagStore.ports(1)
 
   tagRead.req.writeEn := Bool(false)
-  tagWrite.req.writeEn := Bool(false)
+  tagRead.req.writeData := UInt(0)
+
+  // tag init logic
+  val regTagInitAddr = Reg(init = UInt(0, 1+numIndBits))
+
+  io.finished := regTagInitAddr === UInt(numLines)
+
+  when(io.mode === SeyrekModes.START_INIT & io.start & !io.finished) {
+    regTagInitAddr := regTagInitAddr + UInt(1)
+    tagRead.req.writeEn := Bool(true)
+  } .elsewhen(!io.start) {
+    regTagInitAddr := UInt(0)
+  }
 
   // cacheline data
   val datStore = Module(new DualPortBRAM(numIndBits, bitsPerLine)).io
@@ -132,7 +144,6 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val datWrite = datStore.ports(1)
 
   datRead.req.writeEn := Bool(false)
-  datWrite.req.writeEn := Bool(false)
 
   // for tracking in-flight hits; these lines should not be written to
   val pendingLineHits = Module(new SearchableQueue(UInt(width = numIndBits), 4)).io
@@ -156,7 +167,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   missHandler.mainMem <> io.mainMem
 
   // mix in resolved requests into the request stream
-  // TODO use own cache port for resolving requests?
+  // IMPROVE use own cache port for resolving requests?
   val reqMix = Module(new Arbiter(cacheReq, 2)).io
   missHandler.resolved <> reqMix.in(0)
   readyReqs <> reqMix.in(1)
@@ -221,7 +232,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   }
 
   //==========================================================================
-  // miss handler -- TODO spearate out as own external module?
+  // miss handler -- IMPROVE spearate out as own external module?
   class MissHandler(txns: Int) extends Module {
     val io = new Bundle {
       // incoming misses
@@ -240,18 +251,24 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
       val mainMem = new GenericMemoryMasterPort(p.mrp)
     }
     // shorthands for main memory access
-    val mreq = io.mainMem.memRdReq
-    val mrsp = io.mainMem.memRdRsp
+    val mreqQ = Module(new FPGAQueue(new GenericMemoryRequest(p.mrp), 2)).io
+    val mrspQ = Module(new FPGAQueue(new GenericMemoryResponse(p.mrp), 2)).io
+    mreqQ.deq <> io.mainMem.memRdReq
+    io.mainMem.memRdRsp <> mrspQ.enq
+
+    val mreq = mreqQ.enq
+    val mrsp = mrspQ.deq
 
     // miss queues, where the misses wait for the load to complete
-    /* TODO replace these with a BRAM */
+    /* IMPROVE replace these with a BRAM */
     val missQ = Vec.fill(txns) {
       Module(new FPGAQueue(cacheReq, 16)).io
     }
     val missQEnqSel = UInt(width = log2Up(txns))
-    val missQEnq = DecoupledInputMux(missQEnqSel, missQ.map(x => x.enq))
+    val missQEnq = DecoupledOutputDemux(missQEnqSel, missQ.map(x => x.enq))
     val missQDeqSel = UInt(width = log2Up(txns))
-    val missQDeq = DecoupledOutputDemux(missQDeqSel, missQ.map(x => x.deq))
+    val missQDeq = DecoupledInputMux(missQDeqSel, missQ.map(x => x.deq))
+    val missQCounts = Vec(missQ.map(x => x.count))
 
     // registers for keeping the status of each miss load
     val loadValid = Reg(init = Bits(0, txns))
@@ -306,7 +323,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     when(io.misses.ready & io.misses.valid & !isExisting) {
       // add new miss entry into the table
-      // TODO write into CAM
+      // write into CAM
       doAdd := Bool(true)
       loadLine(freePos) := missHead.lineNum
       loadTag(freePos) := missHead.tag
@@ -364,7 +381,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     completedQ.deq.ready := Bool(false)
 
-    when(completedQ.deq.valid & missQ(complHeadID).count === UInt(0)) {
+    when(completedQ.deq.valid & missQCounts(complHeadID) === UInt(0)) {
       completedQ.deq.ready := Bool(true)
       doClr := Bool(true)
     }
