@@ -257,7 +257,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     }
   }
 
-  val verboseDebug = false
+  val verboseDebug = true
   if(verboseDebug) {
     monitorStream("reqQ.enq", reqQ.enq)
     monitorStream("tagRespQ.enq", tagRespQ.enq)
@@ -333,11 +333,13 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // check incoming misses for line conflicts and tag match
     val missHead = io.misses.bits
-    val lineMatch = (0 until txns).map(i => loadLine(i) === missHead.lineNum & loadValid(i))
-    val tagMatch = (0 until txns).map(i => loadTag(i) === missHead.tag & loadValid(i))
-    val tagMatchPos = PriorityEncoder(Vec(tagMatch).toBits)
-    val isConflict = Vec(lineMatch).toBits.orR
-    val isExisting = Vec(tagMatch).toBits.orR
+    val lineMatch = Vec((0 until txns).map(i => loadLine(i) === missHead.lineNum & loadValid(i))).toBits
+    val tagMatch = Vec((0 until txns).map(i => loadTag(i) === missHead.tag & loadValid(i))).toBits
+
+    val tagAndLineMatch = lineMatch & tagMatch & loadValid
+    val isConflict = (lineMatch & ~tagMatch & loadValid).orR
+    val isExisting = tagAndLineMatch.orR
+    val hitPos = PriorityEncoder(tagAndLineMatch)
 
     // conflicts cannot enter, even if there is a free slot
     val canEnter = isExisting | (!isConflict & hasFreeSlot)
@@ -346,7 +348,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // move accepted miss into appropriate miss queue
     missQEnq.valid := io.misses.valid & canEnter
     missQEnq.bits := missHead
-    missQEnqSel := Mux(isExisting, tagMatchPos, freePos)
+    missQEnqSel := Mux(isExisting, hitPos, freePos)
 
     // prepare for issuing mem req for the missed cacheline
     mreq.valid := doAdd & !isExisting
@@ -425,7 +427,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // ==========================================================================
     // debug
-    val verboseDebug = false
+    val verboseDebug = true
     if(verboseDebug) {
       when(io.misses.ready & io.misses.valid & !isExisting) {
         printf("New miss in handler: ")
