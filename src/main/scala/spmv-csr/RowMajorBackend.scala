@@ -35,11 +35,8 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   resWriter.memWrDat <> io.mainMem(0).memWrDat
   io.mainMem(0).memWrRsp <> resWriter.memWrRsp
 
-  // completion determination is by the result writer
-  // TODO this may change for other x readers -- init phase may happen
   resWriter.start := io.start
   resWriter.mode := io.mode
-  io.finished := resWriter.finished
 
   // set up the multichannel memory system
   val memsys = Module(new MultiChanMultiPort(p.mrp, p.portsPerPE,
@@ -134,6 +131,15 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   readNZData.io.start := startRegular
   readNZData.io.baseAddr := io.csr.nzData
   readNZData.io.byteCount := bytesVal * io.csr.nz
+
+
+  io.finished := Bool(false)
+
+  when(io.mode === SeyrekModes.START_REGULAR) {
+    io.finished := resWriter.finished
+  } .elsewhen(io.mode === SeyrekModes.START_INIT) {
+    io.finished := inpVecLoader.finished
+  }
 }
 
 
