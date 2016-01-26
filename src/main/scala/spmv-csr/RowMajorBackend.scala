@@ -133,7 +133,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   readNZData.io.byteCount := bytesVal * io.csr.nz
 
 
-  io.finished := Bool(false)
+  io.finished := Bool(true)
 
   when(io.mode === SeyrekModes.START_REGULAR) {
     io.finished := resWriter.finished

@@ -33,7 +33,12 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val numTagBits = p.indWidth - (numOffsBits + numIndBits)
 
   // cache internal types
-  class CacheReq extends Bundle {
+  abstract class PrintableBundle extends Bundle {
+    def printfStr: String
+    def printfElems: () => Seq[Node]
+  }
+
+  class CacheReq extends PrintableBundle {
     // cache internal ID
     val reqID = UInt(width = log2Up(numCacheTxns))
     // line number
@@ -43,15 +48,21 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // word offset in line
     val offs = UInt(width = numOffsBits)
 
+    val printfStr = "rid: %d lineNum: %d tag: %d offs: %d\n"
+    val printfElems = {() => Seq(reqID, lineNum, tag, offs)}
+
     override def cloneType: this.type = new CacheReq().asInstanceOf[this.type]
   }
-  class CacheTagRsp extends Bundle {
+  class CacheTagRsp extends PrintableBundle {
     // hit or miss?
     val isHit = Bool()
     // data from original req:
     val req = new CacheReq()
     // response data if hit
     val data = UInt(width = p.valWidth)
+
+    val printfStr = "rid: %d hit: %d data: %d \n"
+    val printfElems = {() => Seq(req.reqID, isHit, data)}
 
     override def cloneType: this.type = new CacheTagRsp().asInstanceOf[this.type]
   }
@@ -60,6 +71,10 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val cacheReqID = UInt(width = log2Up(numCacheTxns))
   val cacheReq = new CacheReq()
   val cacheTagRsp = new CacheTagRsp()
+
+  def printBundle(b: PrintableBundle) = {
+    printf(b.printfStr, b.printfElems():_*)
+  }
 
   // ==========================================================================
 
@@ -159,6 +174,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val missHandler = Module(new MissHandler(numReadTxns)).io
   missHandler.misses.valid := missQ.deq.valid
   missHandler.misses.bits := missQ.deq.bits.req
+  missQ.deq.ready := missHandler.misses.ready
   missHandler.contextBase := io.contextBase
   missHandler.tagPort <> tagWrite
   missHandler.dataPort <> datWrite
@@ -229,6 +245,26 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     when(pendingLineHits.deq.bits != respQ.enq.bits.req.lineNum) {
       printf("***ERROR! mismatch between expected and queued hit line #\n ")
     }
+  }
+
+  // =========================================================================
+  // debugging
+
+  def monitorStream[T <: PrintableBundle](name: String, stream: DecoupledIO[T]) = {
+    when(stream.valid & stream.ready) {
+      printf("txn on " + name + ": ")
+      printBundle(stream.bits)
+    }
+  }
+
+  val verboseDebug = false
+  if(verboseDebug) {
+    monitorStream("reqQ.enq", reqQ.enq)
+    monitorStream("tagRespQ.enq", tagRespQ.enq)
+    monitorStream("respQ.enq", respQ.enq)
+    monitorStream("miss.enq", missQ.enq)
+    monitorStream("missHandler enter", missHandler.misses)
+    monitorStream("missHandler resolved", missHandler.resolved)
   }
 
   //==========================================================================
