@@ -370,16 +370,17 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // handle read responses from main memory
     val mrspID = mrsp.bits.channelID - UInt(chanIDBase)
     val rspsReceived = loadPrg(mrspID)
+    val targetLine = loadLine(mrspID)
     // signal ready to memRdRsp if line is not in use
-    io.lineToCheck := loadLine(mrspID)
+    io.lineToCheck := targetLine
     mrsp.ready := !io.isLineInUse & completedQ.enq.ready
     // set up tag write
     io.tagPort.req.writeEn := Bool(false)
-    io.tagPort.req.addr := loadLine(mrspID)
+    io.tagPort.req.addr := targetLine
     io.tagPort.req.writeData := Cat(Bool(false), loadTag(mrspID))
     // set up data write
     io.dataPort.req.writeEn := Bool(false)
-    val wAddrBase = mrspID * UInt(burstCount)
+    val wAddrBase = targetLine * UInt(burstCount)
     val wAddrOffs = rspsReceived
     io.dataPort.req.addr := wAddrBase + wAddrOffs
     io.dataPort.req.writeData := mrsp.bits.readData
@@ -420,6 +421,28 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     when(completedQ.deq.valid & missQCounts(complHeadID) === UInt(0)) {
       completedQ.deq.ready := Bool(true)
       doClr := Bool(true)
+    }
+
+    // ==========================================================================
+    // debug
+    val verboseDebug = false
+    if(verboseDebug) {
+      when(io.misses.ready & io.misses.valid & !isExisting) {
+        printf("New miss in handler: ")
+        printf("miss id = %d line = %d tag = %d \n", freePos,
+        missHead.lineNum, missHead.tag)
+      }
+
+      when(mrsp.ready & mrsp.valid) {
+        printf("writing miss data, id %d addr %d data %d prg %d \n",
+          mrspID, wAddrBase+wAddrOffs, mrsp.bits.readData, rspsReceived
+        )
+        when(rspsReceived === UInt(0)) {
+          printf("invalidatig tag for line %d \n", targetLine)
+        } .elsewhen(rspsReceived === UInt(burstCount-1)) {
+          printf("signalling completion for line %d \n", targetLine)
+        }
+      }
     }
   }
 }
