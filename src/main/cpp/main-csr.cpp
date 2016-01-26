@@ -87,10 +87,17 @@ int main(int argc, char *argv[])
     int res = memcmp(y, goldeny, A->getRows() * sizeof(SpMVVal));
     cout << "memcmp result: " << res << endl;
 
-    if(res != 0)
-      for(int i = 0; i < A->getRows(); i++) {
-        if(goldeny[i] != y[i]) cout << i << " golden: " << goldeny[i] << " res: " << y[i] << endl;
+    if(res != 0) {
+      cout << "Result has errors, print comparison? (y/n)" << endl;
+      char yn;
+      cin >> yn;
+      if(yn == 'y') {
+        for(int i = 0; i < A->getRows(); i++) {
+          if(goldeny[i] != y[i]) cout << i << " golden: " << goldeny[i] << " res: " << y[i] << endl;
+        }
       }
+    }
+    
 
     delete acc;
     delete [] x;
@@ -109,5 +116,3 @@ int main(int argc, char *argv[])
   }
 
 }
-
-
