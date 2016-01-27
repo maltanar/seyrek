@@ -125,6 +125,11 @@ public:
       cout << m_perfCtrKeys[i] << " = " << m_perfCtrValMap[m_perfCtrKeys[i]] << endl;
   }
 
+  void forceExit() {
+    updateAllPerfCtrs();
+    printAllStats();
+  }
+
   // HWCSRSpMV-specific functions
   void copyOutputToHost() {
     // copy back y data to the host side

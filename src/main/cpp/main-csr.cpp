@@ -4,6 +4,11 @@
 #include "commonsemirings.hpp"
 #include "platform.h"
 #include <string.h>
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 using namespace std;
 
@@ -21,10 +26,24 @@ public:
   }
 };
 
+typedef CSR<SpMVInd, SpMVVal> SparseMatrix;
+typedef HWCSRSpMV<SpMVInd, SpMVVal> HardwareSpMV;
+HardwareSpMV * acc = 0;
+
+void force_exit(int signum) {
+  cout << "Caught SIGINT, forcing exit" << endl;
+  if(acc)
+    acc->forceExit();
+  exit(1);
+}
+
 int main(int argc, char *argv[])
 {
-  typedef CSR<SpMVInd, SpMVVal> SparseMatrix;
-  typedef HWCSRSpMV<SpMVInd, SpMVVal> HardwareSpMV;
+  // install SIGINT handler
+  struct sigaction action;
+  memset(&action, 0, sizeof(struct sigaction));
+  action.sa_handler = force_exit;
+  int res = sigaction(SIGINT, &action, NULL);
 
   try {
     string matrixName;
@@ -58,7 +77,7 @@ int main(int argc, char *argv[])
     cout << "Enter attach name: " << endl;
     cin >> attachname;
 
-    HardwareSpMV * acc = new HardwareSpMV(platform, 0, attachname.c_str());
+    acc = new HardwareSpMV(platform, 0, attachname.c_str());
 
     cout << "Setting inputs..." << endl;
 
