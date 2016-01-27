@@ -257,7 +257,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     }
   }
 
-  val verboseDebug = true
+  val verboseDebug = false
   if(verboseDebug) {
     monitorStream("reqQ.enq", reqQ.enq)
     monitorStream("tagRespQ.enq", tagRespQ.enq)
@@ -448,7 +448,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // ==========================================================================
     // debug
-    val verboseDebug = true
+    val verboseDebug = false
     if(verboseDebug) {
       when(missHead.ready & missHead.valid & !isExisting) {
         printf("New miss in handler: ")

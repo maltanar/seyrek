@@ -18,7 +18,8 @@ class RowMajorFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
 class DummyRowMajorFrontend(p: SeyrekParams) extends Module {
   val io = new RowMajorFrontendIO(p)
 
-  val seq = NaturalNumbers(p.indWidth, io.start, io.csr.rows)
+  val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
+  val seq = NaturalNumbers(p.indWidth, startRegular, io.csr.rows)
 
   io.results.valid := seq.valid
   io.results.bits.value := seq.bits
@@ -30,6 +31,13 @@ class DummyRowMajorFrontend(p: SeyrekParams) extends Module {
 
   when(io.results.ready & io.results.valid & io.results.bits.ind === UInt(0)) {
     printf("Warning: using dummy frontend\n")
+  }
+
+  val regWUCount = Reg(init = UInt(0, 32))
+
+  when(io.workUnits.ready & io.workUnits.valid) {
+    regWUCount := regWUCount + UInt(1)
+    //printf("wu count %d \n", regWUCount)
   }
 }
 
