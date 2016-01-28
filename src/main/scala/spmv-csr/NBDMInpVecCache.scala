@@ -33,11 +33,6 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val numTagBits = p.indWidth - (numOffsBits + numIndBits)
 
   // cache internal types
-  abstract class PrintableBundle extends Bundle {
-    def printfStr: String
-    def printfElems: () => Seq[Node]
-  }
-
   class CacheReq extends PrintableBundle {
     // cache internal ID
     val reqID = UInt(width = log2Up(numCacheTxns))

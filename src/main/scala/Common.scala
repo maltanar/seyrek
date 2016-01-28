@@ -89,9 +89,12 @@ object IndIndPair {
   }
 }
 
-class ValIndPair(valWidth: Int, indWidth: Int) extends Bundle {
+class ValIndPair(valWidth: Int, indWidth: Int) extends PrintableBundle {
   val value = UInt(width = valWidth)
   val ind = UInt(width = indWidth)
+
+  val printfStr = "(v = %d, i = %d)\n"
+  val printfElems = {() => Seq(value, ind)}
 
   override def cloneType: this.type = new ValIndPair(valWidth, indWidth).asInstanceOf[this.type]
 }
