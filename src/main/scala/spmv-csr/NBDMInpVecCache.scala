@@ -7,6 +7,7 @@ import TidbitsOCM._
 
 class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) {
   val inOrder = false
+  val verboseDebug = true
 
   // TODO parametrize
 
@@ -48,16 +49,16 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     override def cloneType: this.type = new CacheReq().asInstanceOf[this.type]
   }
-  class CacheTagRsp extends PrintableBundle {
+  class CacheTagRsp extends CacheReq {
     // hit or miss?
     val isHit = Bool()
-    // data from original req:
-    val req = new CacheReq()
+    // load in progress?
+    val isLoadInProgress = Bool()
     // response data if hit
     val data = UInt(width = p.valWidth)
 
-    val printfStr = "rid: %d hit: %d data: %d \n"
-    val printfElems = {() => Seq(req.reqID, isHit, data)}
+    override val printfStr = "rid: %d hit: %d inProg: %d data: %d \n"
+    override val printfElems = {() => Seq(reqID, isHit, isLoadInProgress, data)}
 
     override def cloneType: this.type = new CacheTagRsp().asInstanceOf[this.type]
   }
@@ -72,8 +73,8 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   }
 
   // ==========================================================================
-
   // cloakroom -- don't carry around the entire request
+  val inQ = FPGAQueue(io.loadReq, 2)
   val cloakroom = Mem(p.vii, numCacheTxns)
   val cacheReqIDPool = Module(
     new ReqIDQueue(log2Up(numCacheTxns), numCacheTxns, 0)).io
@@ -88,17 +89,17 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     cr
   }
 
-  val readyReqs = StreamJoin(inA = io.loadReq, inB = cacheReqIDPool.idOut,
+  val readyReqs = StreamJoin(inA = inQ, inB = cacheReqIDPool.idOut,
     genO = cacheReq, join = makeCacheReq
   )
 
   // add to cloakroom when request arrives
   when( readyReqs.ready & readyReqs.valid) {
-    cloakroom(readyReqs.bits.reqID) := io.loadReq.bits
+    cloakroom(readyReqs.bits.reqID) := inQ.bits
   }
 
-  // requets ready to be processed
-  val reqQ = Module(new FPGAQueue(cacheReq, 4)).io
+  // new requests ready to be processed
+  val newReqs = FPGAQueue(readyReqs, 2)
 
   // responses ready to be processed
   val respQCapacity = 4
@@ -106,7 +107,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   val readyResps = Module(new StreamFork(
     genIn = cacheTagRsp, genA = cacheReqID, genB = p.wu,
-    forkA = {a: CacheTagRsp => a.req.reqID},
+    forkA = {a: CacheTagRsp => a.reqID},
     forkB = {a: CacheTagRsp =>
       val newWU = new WorkUnit(p.valWidth, p.indWidth)
       newWU.vectorVal := a.data
@@ -115,19 +116,22 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     }
   )).io
 
+  val outQ = Module(new FPGAQueue(p.wu, 2)).io
+
   respQ.deq <> readyResps.in
   readyResps.outA <> cacheReqIDPool.idIn
-  readyResps.outB <> io.loadRsp
+  readyResps.outB <> outQ.enq
 
   // retrieve rowInd and matrixVal upon exit
-  io.loadRsp.bits.rowInd := cloakroom(readyResps.in.bits.req.reqID).i
-  io.loadRsp.bits.matrixVal := cloakroom(readyResps.in.bits.req.reqID).v
+  outQ.enq.bits.rowInd := cloakroom(readyResps.in.bits.reqID).i
+  outQ.enq.bits.matrixVal := cloakroom(readyResps.in.bits.reqID).v
+
+  outQ.deq <> io.loadRsp
 
   // ==========================================================================
   // structures for keeping the cache state
-  // TODO initialize tag and valid bits when in init mode
-  // tags and valid bits
-  val tagStore = Module(new DualPortBRAM(numIndBits, 1 + numTagBits)).io
+  // valid - inProgress - tag
+  val tagStore = Module(new DualPortBRAM(numIndBits, 2 + numTagBits)).io
   val tagLat = 1
   val tagRead = tagStore.ports(0)
   val tagWrite = tagStore.ports(1)
@@ -135,7 +139,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   tagRead.req.writeEn := Bool(false)
   tagRead.req.writeData := UInt(0)
 
-  // tag init logic
+  //  initialize tag and valid bits when in init mode
   val regTagInitAddr = Reg(init = UInt(0, 1+numIndBits))
 
   io.finished := regTagInitAddr === UInt(numLines)
@@ -148,42 +152,32 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   }
 
   // cacheline data
-  val datStore = Module(new DualPortBRAM(numIndBits, bitsPerLine)).io
+  val datStore = Module(new DualPortBRAM(numIndBits+numOffsBits, p.mrp.dataWidth)).io
   val datLat = 1
   val datRead = datStore.ports(0)
   val datWrite = datStore.ports(1)
 
   datRead.req.writeEn := Bool(false)
 
-  // for tracking in-flight hits; these lines should not be written to
-  val pendingLineHits = Module(new SearchableQueue(UInt(width = numIndBits), 4)).io
-
+  val missQ = Module(new FPGAQueue(cacheReq, 16)).io
   // queues for storing intermediate results
+  val reqQ = Module(new FPGAQueue(cacheReq, 2)).io
+
+  // TODO tagRespQ size should be max(tagLat, datLat) + 2
   if(tagLat != datLat)
     throw new Exception("tag latency != data latency, needs fix")
-  // TODO tagRespQ size should be max(tagLat, datLat) + 2
   val tagRespQ = Module(new FPGAQueue(cacheTagRsp, tagLat + 2)).io
-  val missQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
-
-  // miss handler
-  val missHandler = Module(new MissHandler(numReadTxns)).io
-  missHandler.misses.valid := missQ.deq.valid
-  missHandler.misses.bits := missQ.deq.bits.req
-  missQ.deq.ready := missHandler.misses.ready
-  missHandler.contextBase := io.contextBase
-  missHandler.tagPort <> tagWrite
-  missHandler.dataPort <> datWrite
-  pendingLineHits.searchVal := missHandler.lineToCheck
-  missHandler.isLineInUse := pendingLineHits.foundVal
-  missHandler.mainMem <> io.mainMem
 
   // mix in resolved requests into the request stream
   // IMPROVE use own cache port for resolving requests?
   val reqMix = Module(new Arbiter(cacheReq, 2)).io
-  missHandler.resolved <> reqMix.in(0)
-  readyReqs <> reqMix.in(1)
+  newReqs <> reqMix.in(0)
+  missQ.deq <> reqMix.in(1)
+
   reqMix.out <> reqQ.enq
 
+  // CAM for tracking in-flight loads
+  val pendingLoads = Module(new CAM(numReadTxns, numTagBits)).io
 
   // ==========================================================================
   // tag lookup logic
@@ -196,21 +190,23 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val mAddrOffs = reqQ.deq.bits.offs / UInt(elemsPerMemWord)
   datRead.req.addr := mAddrBase + mAddrOffs
 
-  val tagHazard = (reqQ.deq.bits.lineNum === tagWrite.req.addr) & tagWrite.req.writeEn
+  val tagHazard = /*(reqQ.deq.bits.lineNum === tagWrite.req.addr) & */tagWrite.req.writeEn
   val canReadTag = (tagRespQ.count < UInt(2)) & !tagHazard
 
   val origReq = ShiftRegister(reqQ.deq.bits, tagLat)
 
   val tagMatch = tagRead.rsp.readData(numTagBits-1, 0) === origReq.tag
-  val tagValid = tagRead.rsp.readData(numTagBits)
+  val inProg = tagRead.rsp.readData(numTagBits)
+  val tagValid = tagRead.rsp.readData(numTagBits + 1)
   val tagHit = tagMatch & tagValid
 
   reqQ.deq.ready := canReadTag
 
   // set up connections to the tagRespQ enq.
   tagRespQ.enq.valid := ShiftRegister(canReadTag & reqQ.deq.valid, tagLat)
+  origReq <> tagRespQ.enq.bits
   tagRespQ.enq.bits.isHit := tagHit
-  tagRespQ.enq.bits.req := origReq
+  tagRespQ.enq.bits.isLoadInProgress := inProg
 
   // data read is slightly trickier
   // if there are multiple inp.vec elements per word, need to choose subword
@@ -223,244 +219,112 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     tagRespQ.enq.bits.data := datRead.rsp.readData
   }
 
-  // add to pending hits when there is a hit
-  val isNewHit = tagRespQ.enq.valid & tagRespQ.enq.ready & tagHit
-  pendingLineHits.enq.valid := isNewHit
-  pendingLineHits.enq.bits := origReq.lineNum
-
   // route tag lookup output into appropriate queue
-  val tagRespDest = Seq(missQ.enq, respQ.enq)
-  tagRespQ.deq <> DecoupledOutputDemux(tagRespQ.deq.bits.isHit, tagRespDest)
+  val tagRespDest = Module(new DecoupledOutputDemux(cacheTagRsp, 2)).io
+  tagRespQ.deq <> tagRespDest.in
+  tagRespDest.out(0) <> missQ.enq
+  tagRespDest.out(1) <> respQ.enq
 
-  // decrement hit-in-progress counter for this line when hit
-  pendingLineHits.deq.ready := respQ.enq.valid & respQ.enq.ready
+  tagRespDest.sel := tagRespQ.deq.bits.isHit
 
-  // sanity check: dequeued pending hit line and actually read line must match
-  when(respQ.enq.valid & respQ.enq.ready) {
-    when(pendingLineHits.deq.bits != respQ.enq.bits.req.lineNum) {
-      printf("***ERROR! mismatch between expected and queued hit line #\n ")
+  // =========================================================================
+  // miss handling: issue load requests
+  val missHead = missQ.enq
+  // shorthands for accessing main memory
+  val mreqQ = Module(new FPGAQueue(new GenericMemoryRequest(p.mrp), 2)).io
+  val mrspQ = Module(new FPGAQueue(new GenericMemoryResponse(p.mrp), 2)).io
+  mreqQ.deq <> io.mainMem.memRdReq
+  io.mainMem.memRdRsp <> mrspQ.enq
+  val mreq = mreqQ.enq
+  val mrsp = mrspQ.deq
+  // check missQ enqs against pending loads, prepare to write
+  pendingLoads.tag := missHead.bits.tag
+  pendingLoads.write_tag := missHead.bits.tag
+  pendingLoads.write := Bool(false)
+  val alreadyLoading = pendingLoads.hit | tagRespQ.deq.bits.isLoadInProgress
+  val canHandleMiss = pendingLoads.hasFree & mreq.ready
+  val freePos = pendingLoads.freeInd
+  val loadingLine = Vec.fill(numReadTxns) {Reg(init = UInt(0, numIndBits))}
+  val loadingTag = Vec.fill(numReadTxns) {Reg(init = UInt(0, numTagBits))}
+  val loadingPrg = Vec.fill(numReadTxns) {Reg(init = UInt(0, 4))}
+
+  // prepare for issuing mem req for the missed cacheline
+  mreq.valid := Bool(false)
+  mreq.bits.channelID := UInt(chanIDBase) + freePos
+  mreq.bits.isWrite := Bool(false)
+  val theLine = Cat(missHead.bits.tag, missHead.bits.lineNum)
+  mreq.bits.addr := io.contextBase + theLine * UInt(bytesPerLine)
+  mreq.bits.numBytes := UInt(bytesPerLine)
+  mreq.bits.metaData := UInt(0)
+
+  when(missHead.valid & missHead.ready) {
+    when(!alreadyLoading & canHandleMiss) {
+      // add to pending loads and book info
+      pendingLoads.write := Bool(true)
+      loadingLine(freePos) := missHead.bits.lineNum
+      loadingTag(freePos) := missHead.bits.tag
+      loadingPrg(freePos) := UInt(0)
+      // issue memory request
+      mreq.valid := Bool(true)
+      if(verboseDebug) {
+        printf("New load: id = %d line = %d tag = %d \n",
+          freePos, missHead.bits.lineNum, missHead.bits.tag
+        )
+      }
     }
   }
 
   // =========================================================================
-  // debugging
+  // handle read responses from main memory
+  val mrspID = mrsp.bits.channelID - UInt(chanIDBase)
+  val rspsReceived = loadingPrg(mrspID)
+  val targetLine = loadingLine(mrspID)
 
-  def monitorStream[T <: PrintableBundle](name: String, stream: DecoupledIO[T]) = {
-    when(stream.valid & stream.ready) {
-      printf("txn on " + name + ": ")
-      printBundle(stream.bits)
-    }
-  }
+  mrsp.ready := Bool(true)
+  // set up tag write
+  tagWrite.req.writeEn := Bool(false)
+  tagWrite.req.addr := targetLine
+  tagWrite.req.writeData := Cat(Bool(false), Bool(true), loadingTag(mrspID))
+  // set up data write
+  datWrite.req.writeEn := Bool(false)
+  val wAddrBase = targetLine * UInt(burstCount)
+  val wAddrOffs = rspsReceived
+  datWrite.req.addr := wAddrBase + wAddrOffs
+  datWrite.req.writeData := mrsp.bits.readData
+  // prepare to remove from pending loads
+  pendingLoads.clear_tag := loadingTag(mrspID)
+  pendingLoads.clear_hit := Bool(false)
 
-  val verboseDebug = false
-  if(verboseDebug) {
-    monitorStream("reqQ.enq", reqQ.enq)
-    monitorStream("tagRespQ.enq", tagRespQ.enq)
-    monitorStream("respQ.enq", respQ.enq)
-    monitorStream("missQ.enq", missQ.enq)
-    monitorStream("missHandler enter", missHandler.misses)
-    monitorStream("missHandler resolved", missHandler.resolved)
-
-    when(io.start & io.mode === SeyrekModes.START_REGULAR) {
-      printf("queue counts: \n")
-      printf("reqQ %d, tagRespQ %d, missQ %d, respQ %d \n",
-        reqQ.count, tagRespQ.count, missQ.count, respQ.count
-      )
-      printf("=================================================================\n")
-    }
-  }
-
-  //==========================================================================
-  // miss handler -- IMPROVE spearate out as own external module?
-  class MissHandler(txns: Int) extends Module {
-    val io = new Bundle {
-      // incoming misses
-      val misses = Decoupled(cacheReq).flip
-      // resolved requests
-      val resolved = Decoupled(cacheReq)
-      // pointer to start of x
-      val contextBase = UInt(INPUT, width = p.mrp.addrWidth)
-      // access to tag and data memories
-      val tagPort = new OCMMasterIF(numTagBits+1, numTagBits+1, numIndBits)
-      val dataPort = new OCMMasterIF(bitsPerLine, bitsPerLine, numIndBits)
-      // checking against in-progress hits to lines
-      val lineToCheck = UInt(OUTPUT, numIndBits)
-      val isLineInUse = Bool(INPUT)
-      // access to main memory for issuing load requests
-      val mainMem = new GenericMemoryMasterPort(p.mrp)
-    }
-    // shorthands for main memory access
-    val mreqQ = Module(new FPGAQueue(new GenericMemoryRequest(p.mrp), 2)).io
-    val mrspQ = Module(new FPGAQueue(new GenericMemoryResponse(p.mrp), 2)).io
-    mreqQ.deq <> io.mainMem.memRdReq
-    io.mainMem.memRdRsp <> mrspQ.enq
-
-    val mreq = mreqQ.enq
-    val mrsp = mrspQ.deq
-
-    // queue for storing conflicting cache misses
-    val conflictQ = Module(new FPGAQueue(cacheReq, 16)).io
-    val mixMiss = Module(new Arbiter(cacheReq, 2)).io
-    io.misses <> mixMiss.in(0)
-    conflictQ.deq <> mixMiss.in(1)
-    val missHead = FPGAQueue(mixMiss.out, 2)
-
-    // miss queues, where the misses wait for the load to complete
-    /* IMPROVE replace these with a BRAM */
-    val missQ = Vec.fill(txns) {
-      Module(new FPGAQueue(cacheReq, 16)).io
-    }
-    val missQEnqSel = UInt(width = log2Up(txns))
-    val missQEnq = DecoupledOutputDemux(missQEnqSel, missQ.map(x => x.enq))
-    val missQDeqSel = UInt(width = log2Up(txns))
-    val missQDeq = DecoupledInputMux(missQDeqSel, missQ.map(x => x.deq))
-    val missQCounts = Vec(missQ.map(x => x.count))
-
-    // registers for keeping the status of each miss load
-    val loadValid = Reg(init = Bits(0, txns))
-    val loadLine = Vec.fill(txns) {Reg(init = UInt(0, numIndBits))}
-    val loadTag = Vec.fill(txns) {Reg(init = UInt(0, numTagBits))}
-    val loadPrg = Vec.fill(txns) {Reg(init = UInt(0, 1+log2Up(burstCount)))}
-
-    val hasFreeSlot = orR(~loadValid)
-    val freePos = PriorityEncoder(~loadValid)
-    val doAdd = Bool()
-    val doClr = Bool()
-    val clrPos = UInt(width = log2Up(txns))
-    doAdd := Bool(false)
-    doClr := Bool(false)
-
-    // produce masks to allow simultaneous write+clear
-    val writeMask = Mux(doAdd, UIntToOH(freePos), Bits(0, txns))
-    val clearMask = Mux(doClr, ~(UIntToOH(clrPos)), ~Bits(0, txns))
-
-    loadValid := (loadValid | writeMask) & clearMask
-
-    // list of completed loads
-    val completedQ = Module(new FPGAQueue(UInt(width = log2Up(txns)), 4)).io
-
-    // ========================================================================
-
-    // check incoming misses for line conflicts and tag match
-    val lineMatch = Vec((0 until txns).map(i => loadLine(i) === missHead.bits.lineNum & loadValid(i))).toBits
-    val tagMatch = Vec((0 until txns).map(i => loadTag(i) === missHead.bits.tag & loadValid(i))).toBits
-
-    val tagAndLineMatch = lineMatch & tagMatch & loadValid
-    val isConflict = (lineMatch & ~tagMatch & loadValid).orR
-    val isExisting = tagAndLineMatch.orR
-    val hitPos = PriorityEncoder(tagAndLineMatch)
-
-    // conflicts cannot enter, even if there is a free slot --
-    // they move into their own queue, called conflictQ, to wait
-    val canEnterAsNew = !isConflict & hasFreeSlot & missQEnq.ready & mreq.ready
-    val canEnterAsExisting = isExisting & missQEnq.ready
-    val canEnterAsConflict = isConflict & conflictQ.enq.ready
-
-    missHead.ready := canEnterAsConflict | canEnterAsNew | canEnterAsExisting
-
-    conflictQ.enq.valid := missHead.valid & isConflict
-    conflictQ.enq.bits := missHead.bits
-
-    // move accepted miss into appropriate miss queue
-    missQEnq.valid := missHead.valid & (canEnterAsNew | canEnterAsExisting)
-    missQEnq.bits := missHead.bits
-    missQEnqSel := Mux(isExisting, hitPos, freePos)
-
-    // prepare for issuing mem req for the missed cacheline
-    mreq.valid := doAdd & !isExisting
-    mreq.bits.channelID := UInt(chanIDBase) + freePos
-    mreq.bits.isWrite := Bool(false)
-    val theLine = Cat(missHead.bits.tag, missHead.bits.lineNum)
-    mreq.bits.addr := io.contextBase + theLine * UInt(bytesPerLine)
-    mreq.bits.numBytes := UInt(bytesPerLine)
-    mreq.bits.metaData := UInt(0)
-
-    when(missHead.ready & missHead.valid & !isExisting) {
-      // add new miss entry into the table
-      // write into CAM
-      doAdd := Bool(true)
-      loadLine(freePos) := missHead.bits.lineNum
-      loadTag(freePos) := missHead.bits.tag
-      loadPrg(freePos) := UInt(0)
-    }
-
-    // =======================================================================
-    // handle read responses from main memory
-    val mrspID = mrsp.bits.channelID - UInt(chanIDBase)
-    val rspsReceived = loadPrg(mrspID)
-    val targetLine = loadLine(mrspID)
-    // signal ready to memRdRsp if line is not in use
-    io.lineToCheck := targetLine
-    mrsp.ready := !io.isLineInUse & completedQ.enq.ready
-    // set up tag write
-    io.tagPort.req.writeEn := Bool(false)
-    io.tagPort.req.addr := targetLine
-    io.tagPort.req.writeData := Cat(Bool(false), loadTag(mrspID))
-    // set up data write
-    io.dataPort.req.writeEn := Bool(false)
-    val wAddrBase = targetLine * UInt(burstCount)
-    val wAddrOffs = rspsReceived
-    io.dataPort.req.addr := wAddrBase + wAddrOffs
-    io.dataPort.req.writeData := mrsp.bits.readData
-    // set up signals for completion
-    completedQ.enq.bits := mrspID
-    completedQ.enq.valid := Bool(false)
-
-    when(mrsp.ready & mrsp.valid) {
-      // activate data write
-      io.dataPort.req.writeEn := Bool(true)
-      // increment progress counter
-      rspsReceived := rspsReceived + UInt(1)
-      when(rspsReceived === UInt(0)) {
-        // write valid = 0 when first response received
-        io.tagPort.req.writeEn := Bool(true)
-      } .elsewhen(rspsReceived === UInt(burstCount-1)) {
-        // last burst beat received -- data is now valid
-        io.tagPort.req.writeEn := Bool(true)
-        io.tagPort.req.writeData := Cat(Bool(true), loadTag(mrspID))
-        // signal completed, add mrspID to completedQ
-        completedQ.enq.valid := Bool(true)
-      }
-    }
-
-    // =======================================================================
-    // flush pending requests when load finished
-    val complHeadID = completedQ.deq.bits
-
-    clrPos := complHeadID
-    missQDeqSel := complHeadID
-
-    io.resolved.valid := missQDeq.valid & completedQ.deq.valid
-    io.resolved.bits := missQDeq.bits
-    missQDeq.ready := io.resolved.ready & completedQ.deq.valid
-
-    completedQ.deq.ready := Bool(false)
-
-    when(completedQ.deq.valid & missQCounts(complHeadID) === UInt(0)) {
-      completedQ.deq.ready := Bool(true)
-      doClr := Bool(true)
-    }
-
-    // ==========================================================================
-    // debug
-    val verboseDebug = false
-    if(verboseDebug) {
-      when(missHead.ready & missHead.valid & !isExisting) {
-        printf("New miss in handler: ")
-        printf("miss id = %d line = %d tag = %d \n", freePos,
-        missHead.bits.lineNum, missHead.bits.tag)
-      }
-
-      when(mrsp.ready & mrsp.valid) {
-        printf("writing miss data, id %d addr %d data %d prg %d \n",
-          mrspID, wAddrBase+wAddrOffs, mrsp.bits.readData, rspsReceived
+  when(mrsp.ready & mrsp.valid) {
+    // activate data write
+    datWrite.req.writeEn := Bool(true)
+    // increment progress counter
+    rspsReceived := rspsReceived + UInt(1)
+    when(rspsReceived === UInt(0)) {
+      // write valid = 0 when first response received
+      tagWrite.req.writeEn := Bool(true)
+    } .elsewhen(rspsReceived === UInt(burstCount-1)) {
+      // last burst beat received -- data is now valid
+      tagWrite.req.writeEn := Bool(true)
+      tagWrite.req.writeData := Cat(Bool(true), Bool(false), loadingTag(mrspID))
+      // remove from scheduler
+      pendingLoads.clear_hit := Bool(true)
+      if(verboseDebug) {
+        printf("Completed load: id = %d line = %d tag = %d \n",
+          mrspID, targetLine, loadingTag(mrspID)
         )
-        when(rspsReceived === UInt(0)) {
-          printf("invalidatig tag for line %d \n", targetLine)
-        } .elsewhen(rspsReceived === UInt(burstCount-1)) {
-          printf("signalling completion for line %d \n", targetLine)
-        }
       }
+    }
+  }
+
+  // ==========================================================================
+  // debug
+  if(verboseDebug) {
+    val queues = Seq(reqQ, tagRespQ, missQ, respQ)
+    val names = Seq("req", "tagResp", "miss", "resp")
+    for((q,n) <- queues zip names) {
+      PrintableBundleStreamMonitor(q.enq, Bool(true), "+"+n, true)
+      //PrintableBundleStreamMonitor(q.deq, Bool(true), "-"+n, true)
     }
   }
 }
