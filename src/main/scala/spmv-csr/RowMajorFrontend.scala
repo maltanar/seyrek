@@ -86,7 +86,7 @@ class RowMajorReducerUpsizerIO(p: SeyrekParams) extends Bundle {
   val inB = Decoupled(p.vi).flip
   val out = Decoupled(p.wu)
   val aCount = UInt(OUTPUT, 2)
-  val bCount = UInt(OUTPUT, 2)
+  val bCount = UInt(OUTPUT, 4)
 
   override def cloneType: this.type = new RowMajorReducerUpsizerIO(p).asInstanceOf[this.type]
 }
@@ -95,7 +95,7 @@ class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
   val io = new RowMajorReducerUpsizerIO(p)
 
   val qiA = FPGAQueue(io.inA, 2)
-  val qiB = FPGAQueue(io.inB, 2)
+  val qiB = FPGAQueue(io.inB, 8)
 
   val qA = Module(new FPGAQueue(p.vi, 2)).io
   val qB = Module(new FPGAQueue(p.vi, 2)).io
@@ -161,7 +161,7 @@ class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
 // support small deviations from row-major (needed to support out-of-order
 //  data returns from the x read)
 class RowMajorReducer(p: SeyrekParams) extends Module {
-  val opQDepth = 16   /*TODO parametrize / auto-compute */
+  val verbose_debug = false
   val io = new Bundle {
     // length of each row. indA = row number, indB = num nonzeroes in row
     val rowLen = Decoupled(p.ii).flip
@@ -170,9 +170,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
     // results out
     val results = Decoupled(p.vi)
   }
-
-  // queues for holding operand + scheduler entry number
-  val opQ = Vec.fill(p.issueWindow) {Module(new FPGAQueue(p.vi, opQDepth)).io}
+  // op queue = b queue of the upsizer
   // upsizer for issuing add ops. inA from the adder, inB from the opQ
   val ups = Vec.fill(p.issueWindow) {Module(new RowMajorReducerUpsizer(p)).io}
   // demux for the upsizer stream inputs
@@ -181,16 +179,16 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   upsEntrySel := upsEntry.bits.ind
   // round robin arbiter for popping the op pairs for the adder
   val opArb = Module(new RRArbiter(p.wu, p.issueWindow)).io
-  for(i <- 0 until p.issueWindow) {
-    opQ(i).deq <> ups(i).inB
-    ups(i).out <> opArb.in(i)
-  }
-  // count of each op queue, useful for debug
-  val counts = Vec(opQ.map(x => x.count))
   // signal for controlling the enq index to the opQ's
   val opQEnqSel = UInt(width = log2Up(p.issueWindow))
   // demuxer for enq into op queues
-  val opQEnq = DecoupledOutputDemux(opQEnqSel, opQ.map(x => x.enq))
+  val opQEnq = DecoupledOutputDemux(opQEnqSel, ups.map(x => x.inB))
+
+  for(i <- 0 until p.issueWindow) {
+    ups(i).out <> opArb.in(i)
+  }
+  // count of each op queue, useful for debug
+  val counts = Vec(ups.map(x => x.bCount))
 
   // the adder as defined by the semiring
   val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
@@ -353,8 +351,8 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   }
 
   // printfs for debugging ====================================================
-  val verbose_debug = false
   if(verbose_debug) {
+    /*
     printf("====================================================\n")
     printf("queue counts: wq = %d addq = %d resq = %d retq = %d resOpQ = %d zeroQ = %d oneQ = %d \n",
       workQ.count, addQ.count, resQ.count, retQ.count, resOpQ.count, zeroQ.count, oneQ.count
@@ -378,6 +376,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
     printf("nz counts (may be unoccupied): \n")
     for(i <- 0 until p.issueWindow) {printf("%d ", regNZLeft(i))}
     printf("\n")
+    */
 
     when(io.rowLen.ready & io.rowLen.valid) {
       printf("scheduler add: slot = %d rowid = %d rowlen = %d\n",
