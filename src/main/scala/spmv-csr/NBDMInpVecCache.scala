@@ -34,9 +34,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val numTagBits = p.indWidth - (numOffsBits + numIndBits)
 
   // cache internal types
-  class CacheReq extends PrintableBundle {
-    // cache internal ID
-    val reqID = UInt(width = log2Up(numCacheTxns))
+  class CacheReq extends CloakroomBundle(numCacheTxns) {
     // line number
     val lineNum = UInt(width = numIndBits)
     // line tag
@@ -44,11 +42,12 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // word offset in line
     val offs = UInt(width = numOffsBits)
 
-    val printfStr = "rid: %d lineNum: %d tag: %d offs: %d\n"
-    val printfElems = {() => Seq(reqID, lineNum, tag, offs)}
+    override val printfStr = "id: %d lineNum: %d tag: %d offs: %d\n"
+    override val printfElems = {() => Seq(id, lineNum, tag, offs)}
 
     override def cloneType: this.type = new CacheReq().asInstanceOf[this.type]
   }
+
   class CacheTagRsp extends CacheReq {
     // hit or miss?
     val isHit = Bool()
@@ -57,76 +56,15 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // response data if hit
     val data = UInt(width = p.valWidth)
 
-    override val printfStr = "rid: %d hit: %d inProg: %d data: %d \n"
-    override val printfElems = {() => Seq(reqID, isHit, isLoadInProgress, data)}
+    override val printfStr = "id: %d hit: %d inProg: %d data: %d \n"
+    override val printfElems = {() => Seq(id, isHit, isLoadInProgress, data)}
 
     override def cloneType: this.type = new CacheTagRsp().asInstanceOf[this.type]
   }
 
   // cloneTypes for internal types
-  val cacheReqID = UInt(width = log2Up(numCacheTxns))
   val cacheReq = new CacheReq()
   val cacheTagRsp = new CacheTagRsp()
-
-  def printBundle(b: PrintableBundle) = {
-    printf(b.printfStr, b.printfElems():_*)
-  }
-
-  // ==========================================================================
-  // cloakroom -- don't carry around the entire request
-  val inQ = FPGAQueue(io.loadReq, 2)
-  val cloakroom = Mem(p.vii, numCacheTxns)
-  val cacheReqIDPool = Module(
-    new ReqIDQueue(log2Up(numCacheTxns), numCacheTxns, 0)).io
-
-  // turn the external (Aij, i, j) into a cache request
-  def makeCacheReq(rq: ValIndInd, rid: UInt): CacheReq = {
-    val cr = new CacheReq()
-    cr.reqID := rid
-    cr.tag := rq.j(p.indWidth-1, numOffsBits + numIndBits)
-    cr.lineNum := rq.j(numOffsBits + numIndBits - 1, numOffsBits)
-    cr.offs := rq.j(numOffsBits-1, 0)
-    cr
-  }
-
-  val readyReqs = StreamJoin(inA = inQ, inB = cacheReqIDPool.idOut,
-    genO = cacheReq, join = makeCacheReq
-  )
-
-  // add to cloakroom when request arrives
-  when( readyReqs.ready & readyReqs.valid) {
-    cloakroom(readyReqs.bits.reqID) := inQ.bits
-  }
-
-  // new requests ready to be processed
-  val newReqs = FPGAQueue(readyReqs, 2)
-
-  // responses ready to be processed
-  val respQCapacity = 4
-  val respQ = Module(new FPGAQueue(cacheTagRsp, respQCapacity)).io
-
-  val readyResps = Module(new StreamFork(
-    genIn = cacheTagRsp, genA = cacheReqID, genB = p.wu,
-    forkA = {a: CacheTagRsp => a.reqID},
-    forkB = {a: CacheTagRsp =>
-      val newWU = new WorkUnit(p.valWidth, p.indWidth)
-      newWU.vectorVal := a.data
-      // other WU elements will be fetched from the cloakroom
-      newWU
-    }
-  )).io
-
-  val outQ = Module(new FPGAQueue(p.wu, 2)).io
-
-  respQ.deq <> readyResps.in
-  readyResps.outA <> cacheReqIDPool.idIn
-  readyResps.outB <> outQ.enq
-
-  // retrieve rowInd and matrixVal upon exit
-  outQ.enq.bits.rowInd := cloakroom(readyResps.in.bits.reqID).i
-  outQ.enq.bits.matrixVal := cloakroom(readyResps.in.bits.reqID).v
-
-  outQ.deq <> io.loadRsp
 
   // ==========================================================================
   // structures for keeping the cache state
@@ -159,8 +97,9 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   datRead.req.writeEn := Bool(false)
 
+  val respQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
   val missQ = Module(new FPGAQueue(cacheReq, 16)).io
-  // queues for storing intermediate results
+  val newReqQ = Module(new FPGAQueue(cacheReq, 2)).io
   val reqQ = Module(new FPGAQueue(cacheReq, 2)).io
 
   // TODO tagRespQ size should be max(tagLat, datLat) + 2
@@ -171,13 +110,44 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   // mix in resolved requests into the request stream
   // IMPROVE use own cache port for resolving requests?
   val reqMix = Module(new Arbiter(cacheReq, 2)).io
-  newReqs <> reqMix.in(0)
+  newReqQ.deq <> reqMix.in(0)
   missQ.deq <> reqMix.in(1)
 
   reqMix.out <> reqQ.enq
 
   // CAM for tracking in-flight loads
   val pendingLoads = Module(new CAM(numReadTxns, numTagBits)).io
+
+  // ==========================================================================
+  // cloakroom -- don't carry around the entire request
+
+  // turn the external (Aij, i, j) into a cache request
+  def viiToCacheReq(rq: ValIndInd): CacheReq = {
+    val cr = new CacheReq()
+    cr.tag := rq.j(p.indWidth-1, numOffsBits + numIndBits)
+    cr.lineNum := rq.j(numOffsBits + numIndBits - 1, numOffsBits)
+    cr.offs := rq.j(numOffsBits-1, 0)
+    cr
+  }
+
+  def makeWU(origRq: ValIndInd, rsp: CacheTagRsp): WorkUnit = {
+    val wu = new WorkUnit(p.valWidth, p.indWidth)
+    wu.matrixVal := origRq.v
+    wu.vectorVal := rsp.data
+    wu.rowInd := origRq.i
+    wu
+  }
+
+  val cloakroom = Module(new CloakroomLUTRAM(
+    num = numCacheTxns, genA = p.vii, genC = cacheTagRsp,
+    undress = viiToCacheReq, dress = makeWU
+  )).io
+
+  io.loadReq <> cloakroom.extIn
+  cloakroom.intOut <> newReqQ.enq
+
+  respQ.deq <> cloakroom.intIn
+  cloakroom.extOut <> io.loadRsp
 
   // ==========================================================================
   // tag lookup logic
