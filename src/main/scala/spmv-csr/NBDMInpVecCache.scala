@@ -148,15 +148,12 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   }
 
   // cacheline data
-  val datStore = Module(new DualPortBRAM(numIndBits, bitsPerLine)).io
+  val datStore = Module(new DualPortBRAM(numIndBits+numOffsBits, p.mrp.dataWidth)).io
   val datLat = 1
   val datRead = datStore.ports(0)
   val datWrite = datStore.ports(1)
 
   datRead.req.writeEn := Bool(false)
-
-  // for tracking in-flight hits; these lines should not be written to
-  val pendingLineHits = Module(new SearchableQueue(UInt(width = numIndBits), 4)).io
 
   // queues for storing intermediate results
   if(tagLat != datLat)
@@ -173,8 +170,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   missHandler.contextBase := io.contextBase
   missHandler.tagPort <> tagWrite
   missHandler.dataPort <> datWrite
-  pendingLineHits.searchVal := missHandler.lineToCheck
-  missHandler.isLineInUse := pendingLineHits.foundVal
+
   missHandler.mainMem <> io.mainMem
 
   // mix in resolved requests into the request stream
@@ -223,24 +219,11 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     tagRespQ.enq.bits.data := datRead.rsp.readData
   }
 
-  // add to pending hits when there is a hit
-  val isNewHit = tagRespQ.enq.valid & tagRespQ.enq.ready & tagHit
-  pendingLineHits.enq.valid := isNewHit
-  pendingLineHits.enq.bits := origReq.lineNum
-
   // route tag lookup output into appropriate queue
   val tagRespDest = Seq(missQ.enq, respQ.enq)
   tagRespQ.deq <> DecoupledOutputDemux(tagRespQ.deq.bits.isHit, tagRespDest)
 
-  // decrement hit-in-progress counter for this line when hit
-  pendingLineHits.deq.ready := respQ.enq.valid & respQ.enq.ready
 
-  // sanity check: dequeued pending hit line and actually read line must match
-  when(respQ.enq.valid & respQ.enq.ready) {
-    when(pendingLineHits.deq.bits != respQ.enq.bits.req.lineNum) {
-      printf("***ERROR! mismatch between expected and queued hit line #\n ")
-    }
-  }
 
   // =========================================================================
   // debugging
