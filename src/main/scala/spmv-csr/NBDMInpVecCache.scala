@@ -14,8 +14,8 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   if(p.valWidth > p.mrp.dataWidth || p.mrp.dataWidth % p.valWidth != 0)
     throw new Exception("Unsupported valWidth:dataWidth ratio")
 
-  val numReadTxns = 4
-  val numCacheTxns = numReadTxns + 2
+  val numReadTxns = 8
+  val numCacheTxns = 64
   val numLines = 1024
 
   if(!isPow2(numLines))
@@ -98,7 +98,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   datRead.req.writeEn := Bool(false)
 
   val respQ = Module(new FPGAQueue(cacheTagRsp, 2)).io
-  val missQ = Module(new FPGAQueue(cacheReq, 16)).io
+  val missQ = Module(new FPGAQueue(cacheReq, numCacheTxns)).io
   val newReqQ = Module(new FPGAQueue(cacheReq, 2)).io
   val reqQ = Module(new FPGAQueue(cacheReq, 2)).io
 
@@ -138,7 +138,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     wu
   }
 
-  val cloakroom = Module(new CloakroomLUTRAM(
+  val cloakroom = Module(new CloakroomBRAM(
     num = numCacheTxns, genA = p.vii, genC = cacheTagRsp,
     undress = viiToCacheReq, dress = makeWU
   )).io
