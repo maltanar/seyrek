@@ -24,7 +24,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   val io = new RowMajorBackendIO(p)
 
   // instantiate result writer -- TODO parametrize type?
-  val resWriter = Module(new ResultWriterCombining(p)).io
+  val resWriter = Module(new ResultWriterSimple(p)).io
   io.csr <> resWriter.csr
 
   // give reducer results to result writer
