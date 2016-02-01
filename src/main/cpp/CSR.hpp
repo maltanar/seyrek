@@ -53,13 +53,13 @@ public:
   void setName(std::string name) {m_name = name;}
   std::string getName() {return m_name;}
 
-  static CSR * load(std::string name) {
+  static CSR * load(std::string name, bool genNZData = false) {
     SparseMatrixMetadata * md = (SparseMatrixMetadata *)readMatrixData(name, "meta");
     if(md->bytesPerInd != sizeof(SpMVInd)) {
         throw "bytesPerInd mismatch in CSR::load";
     }
-    if(md->bytesPerVal != sizeof(SpMVVal)) {
-        throw "bytesPerVal mismatch in CSR::load";
+    if((md->bytesPerVal != sizeof(SpMVVal)) && !genNZData) {
+        throw "bytesPerVal mismatch in CSR::load -- consider using genNZData";
     }
     CSR * ret = new CSR();
     ret->m_metadata = md;
@@ -67,8 +67,18 @@ public:
     if(!ret->m_indPtrs) throw "could not load indptr in CSR::load";
     ret->m_inds = (SpMVInd *)readMatrixData(name, "inds");
     if(!ret->m_inds) throw "could not load inds in CSR::load";
-    ret->m_nzData = (SpMVVal *)readMatrixData(name, "nzdata");
-    if(!ret->m_nzData) throw "could not load nzdata in CSR::load";
+    if(genNZData) {
+      std::cout << "Warning: not using original matrix nzdata values" << std::endl;
+      SpMVInd nnz = md->nz;
+      ret->m_nzData = new SpMVVal[nnz];
+      for(SpMVInd i = 0; i < nnz; i++) {
+        ret->m_nzData[i] = (SpMVVal) (i + 1);
+      }
+    } else {
+      ret->m_nzData = (SpMVVal *)readMatrixData(name, "nzdata");
+      if(!ret->m_nzData) throw "could not load nzdata in CSR::load";
+    }
+
     ret->m_name = name;
 
     ret->m_needsDealloc = true;

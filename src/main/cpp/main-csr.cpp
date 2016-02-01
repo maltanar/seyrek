@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
       cin >> dim;
       A = SparseMatrix::dense(dim);
     } else
-      A = SparseMatrix::load(matrixName);
+      A = SparseMatrix::load(matrixName, true);
 
     A->printSummary();
     SpMVVal * x = new SpMVVal[A->getCols()];
