@@ -23,13 +23,14 @@ class CSR {
 public:
 
   CSR() {
+    m_needsDealloc = false;
     m_metadata = 0;
     m_indPtrs = 0; m_inds = 0; m_nzData = 0;
     m_name = "<not initialized>";
   }
 
   virtual ~CSR(){
-    if(m_metadata) {
+    if(m_needsDealloc) {
       delete m_metadata;
       delete [] m_indPtrs;
       delete [] m_inds;
@@ -70,6 +71,8 @@ public:
     if(!ret->m_nzData) throw "could not load nzdata in CSR::load";
     ret->m_name = name;
 
+    ret->m_needsDealloc = true;
+
     return ret;
   }
 
@@ -92,6 +95,8 @@ public:
     }
     ret->m_indPtrs[dim] = dim;
     ret->setName("eye");
+
+    ret->m_needsDealloc = true;
 
     return ret;
   }
@@ -118,6 +123,8 @@ public:
     }
 
     ret->setName("dense");
+
+    ret->m_needsDealloc = true;
 
     return ret;
   }
@@ -150,8 +157,46 @@ public:
     return m_metadata->startingRow;
   }
 
+  // calculate a vector of row indices that split the matrix into equal-sized
+  // horizontal chunks
+  std::vector<SpMVInd> calcRowPartitionBoundaries(unsigned int numPartitions) {
+    std::vector<SpMVInd> boundaries;
+    unsigned int divSize = (m_metadata->rows + numPartitions) / numPartitions;
+    for(unsigned int i = 0; i < numPartitions; i++) {
+      boundaries.push_back(divSize * i);
+    }
+    // push the matrix nz count as the upper bound
+    boundaries.push_back(m_metadata->rows);
+    return boundaries;
+  }
+
+
+  std::vector<CSR<SpMVInd, SpMVVal> * > rowPartitionedView(std::vector<SpMVInd> boundaries) {
+    std::vector<CSR<SpMVInd, SpMVVal> * > res;
+    unsigned int numPartitions = boundaries.size() - 1;
+    for(unsigned int i = 0; i < numPartitions; i++) {
+        res.push_back(new CSR<SpMVInd, SpMVVal>());
+        res[i]->m_metadata = new SparseMatrixMetadata;
+        res[i]->m_metadata->cols = m_metadata->cols;
+        res[i]->m_metadata->rows = boundaries[i+1] - boundaries[i];
+        res[i]->m_metadata->nz = m_indPtrs[boundaries[i+1]] - m_indPtrs[boundaries[i]];;
+        res[i]->m_metadata->startingRow = boundaries[i];
+        res[i]->m_metadata->startingCol = 0;
+        res[i]->m_metadata->bytesPerInd = m_metadata->bytesPerInd;
+        res[i]->m_metadata->bytesPerVal = m_metadata->bytesPerVal;
+        res[i]->m_indPtrs = (SpMVInd *) &m_indPtrs[boundaries[i]];
+        res[i]->m_inds = (SpMVInd *) &m_inds[m_indPtrs[boundaries[i]]];
+        res[i]->m_nzData = (SpMVVal *) &m_nzData[m_indPtrs[boundaries[i]]];
+        char partName[256];
+        itoa(i, partName);
+        res[i]->m_name = m_name + "-p" + std::string(partName);
+    }
+    return res;
+  }
+
 
 protected:
+  bool m_needsDealloc;
   SparseMatrixMetadata * m_metadata;
 
   SpMVInd * m_indPtrs;

@@ -1,6 +1,7 @@
 #include <iostream>
 #include "SWCSRSpMV.hpp"
 #include "HWCSRSpMV.hpp"
+#include "ParallelHWCSRSpMV.hpp"
 #include "commonsemirings.hpp"
 #include "platform.h"
 #include <string.h>
@@ -28,12 +29,15 @@ public:
 
 typedef CSR<SpMVInd, SpMVVal> SparseMatrix;
 typedef HWCSRSpMV<SpMVInd, SpMVVal> HardwareSpMV;
-HardwareSpMV * acc = 0;
+typedef ParallelHWCSRSpMV<SpMVInd, SpMVVal> ParHWSpMV;
+
+ParHWSpMV * acc = 0;
 
 void force_exit(int signum) {
   cout << "Caught SIGINT, forcing exit" << endl;
-  if(acc)
-    acc->forceExit();
+  if(acc) {
+      acc->forceExit();
+  }
   exit(1);
 }
 
@@ -77,7 +81,12 @@ int main(int argc, char *argv[])
     cout << "Enter attach name: " << endl;
     cin >> attachname;
 
-    acc = new HardwareSpMV(platform, 0, attachname.c_str());
+    cout << "Enter PE count: " << endl;
+    unsigned int numPE;
+    cin >> numPE;
+
+    //acc = new HardwareSpMV(platform, 0, attachname.c_str());
+    acc = new ParHWSpMV(numPE, platform, attachname.c_str());
 
     cout << "Setting inputs..." << endl;
 
