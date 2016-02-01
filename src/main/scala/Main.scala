@@ -54,16 +54,16 @@ object ChannelConfigs {
   )
   val csrTest = Map(
     "ptrs" -> ReadChanParams(maxReadTxns = 8, port = 1),
-    "inds" -> ReadChanParams(maxReadTxns = 8, port = 3),
+    "inds" -> ReadChanParams(maxReadTxns = 8, port = 0),
     "nzdata" -> ReadChanParams(maxReadTxns = 8, port = 0),
-    "inpvec" -> ReadChanParams(maxReadTxns = 8, port = 2)
+    "inpvec" -> ReadChanParams(maxReadTxns = 8, port = 1)
   )
 }
 
 class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
   val accelName = "CSRTest"
-  val numPEs = 1
-  val portsPerPE = 4
+  val numPEs = 2
+  val portsPerPE = 2
   val chanConfig = ChannelConfigs.csrTest
   val indWidth = 32
   val valWidth = 64

@@ -14,7 +14,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     throw new Exception("Unsupported valWidth:dataWidth ratio")
 
   val numReadTxns = 8
-  val numCacheTxns = 16
+  val numCacheTxns = 8
   val numLines = 1024
 
   if(!isPow2(numLines))
@@ -212,13 +212,13 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   val verboseDebug = false
   if(verboseDebug) {
-    monitorStream("reqQ.enq", reqQ.enq)
-    monitorStream("tagRespQ.enq", tagRespQ.enq)
-    monitorStream("respQ.enq", respQ.enq)
-    monitorStream("missQ.enq", missQ.enq)
-    monitorStream("missHandler enter", missHandler.misses)
-    monitorStream("missHandler resolved", missHandler.resolved)
+    val queues = Seq(newReqQ.enq, reqQ.enq, tagRespQ.enq, missQ.enq, respQ.enq, missHandler.misses, missHandler.resolved)
+    val names = Seq("newReqQ", "req", "tagResp", "miss", "resp", "miss in", "miss out")
+    for((q,n) <- queues zip names) {
+      PrintableBundleStreamMonitor(q, Bool(true), "+"+n, true)
+    }
 
+/*
     when(io.start & io.mode === SeyrekModes.START_REGULAR) {
       printf("queue counts: \n")
       printf("reqQ %d, tagRespQ %d, missQ %d, respQ %d \n",
@@ -226,6 +226,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
       )
       printf("=================================================================\n")
     }
+    */
   }
 
   //==========================================================================
@@ -364,6 +365,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     completedQ.enq.bits := mrspID
     completedQ.enq.valid := Bool(false)
 
+
     when(mrsp.ready & mrsp.valid) {
       // activate data write
       io.dataPort.req.writeEn := Bool(true)
@@ -394,9 +396,19 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     completedQ.deq.ready := Bool(false)
 
-    when(completedQ.deq.valid & missQCounts(complHeadID) === UInt(0)) {
-      completedQ.deq.ready := Bool(true)
-      doClr := Bool(true)
+    // use a small counter to ensure that we have seen all the misses
+    val regEnsureCompl = Reg(init = UInt(0, 3))
+    val likeCompl = completedQ.deq.valid & !missQDeq.valid
+    val ensureWaitCycles = 4
+
+    when(likeCompl) {
+      regEnsureCompl := regEnsureCompl + UInt(1)
+      when(regEnsureCompl === UInt(ensureWaitCycles)) {
+        // when we are sure all misses have been handled, clear this miss entry
+        regEnsureCompl := UInt(0)
+        completedQ.deq.ready := Bool(true)
+        doClr := Bool(true)
+      }
     }
 
     // ==========================================================================
@@ -404,9 +416,13 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val verboseDebug = false
     if(verboseDebug) {
       when(missHead.ready & missHead.valid & !isExisting) {
-        printf("New miss in handler: ")
-        printf("miss id = %d line = %d tag = %d \n", freePos,
-        missHead.bits.lineNum, missHead.bits.tag)
+        when(!isConflict) {
+          printf("New miss in handler: ")
+          printf("miss id = %d line = %d tag = %d \n", freePos,
+          missHead.bits.lineNum, missHead.bits.tag)
+        } .otherwise {
+          printf("Conflict miss, redir to conflictQ\n")
+        }
       }
 
       when(mrsp.ready & mrsp.valid) {
