@@ -53,8 +53,8 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // response data if hit
     val data = UInt(width = p.valWidth)
 
-    override val printfStr = "id: %d hit: %d data: %d \n"
-    override val printfElems = {() => Seq(id, isHit, data)}
+    override val printfStr = "id: %d ln: %d tag: %d hit: %d data: %d \n"
+    override val printfElems = {() => Seq(id, lineNum, tag, isHit, data)}
 
     override def cloneType: this.type = new CacheTagRsp().asInstanceOf[this.type]
   }
@@ -311,22 +311,43 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // conflicts cannot enter, even if there is a free slot --
     // they move into their own queue, called conflictQ, to wait
-    val canEnterAsNew = !isConflict & hasFreeSlot & missQEnq.ready & mreq.ready
-    val canEnterAsExisting = isExisting & missQEnq.ready
-    val canEnterAsConflict = isConflict & conflictQ.enq.ready
+    val enterAsNew = !isExisting & !isConflict & hasFreeSlot & missQEnq.ready & mreq.ready
+    val enterAsExisting = isExisting & missQEnq.ready
+    val enterAsConflict = isConflict & conflictQ.enq.ready
 
-    missHead.ready := canEnterAsConflict | canEnterAsNew | canEnterAsExisting
+    missHead.ready := enterAsConflict | enterAsNew | enterAsExisting
 
     conflictQ.enq.valid := missHead.valid & isConflict
     conflictQ.enq.bits := missHead.bits
 
     // move accepted miss into appropriate miss queue
-    missQEnq.valid := missHead.valid & (canEnterAsNew | canEnterAsExisting)
+    missQEnq.valid := missHead.valid & (enterAsNew | enterAsExisting)
     missQEnq.bits := missHead.bits
     missQEnqSel := Mux(isExisting, hitPos, freePos)
 
+    // sanity check: miss must enter as only one kind
+    when(missHead.valid & missHead.ready) {
+      val entryType = Cat(enterAsNew, enterAsConflict, enterAsExisting)
+      when(PopCount(entryType) != UInt(1)) {
+        printf("***ERROR! Multiple entry: ")
+        printf("enterAsNew = %d, ", enterAsNew)
+        printf("enterAsConflict = %d, ", enterAsConflict)
+        printf("enterAsExisting = %d, ", enterAsExisting)
+        printf("\n for req: ")
+        printf(missHead.bits.printfStr, missHead.bits.printfElems():_*)
+        printf("lineMatch: %b \n", lineMatch)
+        printf("tagMatch: %b \n", tagMatch)
+        printf("CAM status: \n")
+        for(i <- 0 until txns) {
+          printf("entry %d: valid = %d line = %d tag = %d prg = %d\n", UInt(i),
+            loadValid(i), loadLine(i), loadTag(i), loadPrg(i)
+          )
+        }
+      }
+    }
+
     // prepare for issuing mem req for the missed cacheline
-    mreq.valid := doAdd & !isExisting
+    mreq.valid := doAdd
     mreq.bits.channelID := UInt(chanIDBase) + freePos
     mreq.bits.isWrite := Bool(false)
     val theLine = Cat(missHead.bits.tag, missHead.bits.lineNum)
@@ -334,7 +355,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     mreq.bits.numBytes := UInt(bytesPerLine)
     mreq.bits.metaData := UInt(0)
 
-    when(missHead.ready & missHead.valid & !isExisting) {
+    when(missHead.ready & missHead.valid & enterAsNew) {
       // add new miss entry into the table
       // write into CAM
       doAdd := Bool(true)
@@ -418,7 +439,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
       when(missHead.ready & missHead.valid & !isExisting) {
         when(!isConflict) {
           printf("New miss in handler: ")
-          printf("miss id = %d line = %d tag = %d \n", freePos,
+          printf("mid = %d line = %d tag   = %d \n", freePos,
           missHead.bits.lineNum, missHead.bits.tag)
         } .otherwise {
           printf("Conflict miss, redir to conflictQ\n")
@@ -426,7 +447,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
       }
 
       when(mrsp.ready & mrsp.valid) {
-        printf("writing miss data, id %d addr %d data %d prg %d \n",
+        printf("writing miss data, mid %d addr %d data %d prg %d \n",
           mrspID, wAddrBase+wAddrOffs, mrsp.bits.readData, rspsReceived
         )
         when(rspsReceived === UInt(0)) {
