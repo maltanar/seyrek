@@ -189,11 +189,13 @@ public:
         res[i]->m_metadata = new SparseMatrixMetadata;
         res[i]->m_metadata->cols = m_metadata->cols;
         res[i]->m_metadata->rows = boundaries[i+1] - boundaries[i];
-        res[i]->m_metadata->nz = m_indPtrs[boundaries[i+1]] - m_indPtrs[boundaries[i]];;
+        res[i]->m_metadata->nz = m_indPtrs[boundaries[i+1]] - m_indPtrs[boundaries[i]];
         res[i]->m_metadata->startingRow = boundaries[i];
         res[i]->m_metadata->startingCol = 0;
         res[i]->m_metadata->bytesPerInd = m_metadata->bytesPerInd;
         res[i]->m_metadata->bytesPerVal = m_metadata->bytesPerVal;
+        // note: this will only work for hardware -- software needs the untouched
+        // indPtr/inds/nzdata pointers
         res[i]->m_indPtrs = (SpMVInd *) &m_indPtrs[boundaries[i]];
         res[i]->m_inds = (SpMVInd *) &m_inds[m_indPtrs[boundaries[i]]];
         res[i]->m_nzData = (SpMVVal *) &m_nzData[m_indPtrs[boundaries[i]]];

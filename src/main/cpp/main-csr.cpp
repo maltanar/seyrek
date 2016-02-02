@@ -70,8 +70,10 @@ int main(int argc, char *argv[])
     A->printSummary();
     SpMVVal * x = new SpMVVal[A->getCols()];
     SpMVVal * y = new SpMVVal[A->getRows()];
-    for(int i = 0; i < A->getRows(); i++) {
+    for(int i = 0; i < A->getCols(); i++) {
         x[i] = (i+1)*10;
+    }
+    for(int i = 0; i < A->getRows(); i++) {
         y[i] = 0;
     }
 

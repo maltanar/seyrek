@@ -55,6 +55,7 @@ public:
     m_partitions = A->rowPartitionedView(A->calcRowPartitionBoundaries(m_numPEs));
     // assign the partitions to PEs
     for(unsigned int pe = 0; pe < m_numPEs; pe++) {
+      m_partitions[pe]->printSummary();
       m_pe[pe]->setA(m_partitions[pe]);
     }
   }
