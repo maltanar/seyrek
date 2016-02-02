@@ -70,7 +70,8 @@ extends GenericAccelerator(p) {
 
     val perfCtrMap = Map[String, Data](
       "cycleCount" -> regCycleCount,
-      "workUnits" -> monWU
+      "workUnits" -> monWU,
+      "perfBE" -> backend.io.perfBE
     )
 
     var allocInd: Int = 0

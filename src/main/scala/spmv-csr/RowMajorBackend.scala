@@ -17,6 +17,11 @@ class RowMajorBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val contextReqCnt = UInt(INPUT, 10)
   // memory ports
   val mainMem = Vec.fill(p.portsPerPE) {new GenericMemoryMasterPort(p.mrp)}
+  // stats
+  val perfBE = new Bundle {
+    val cacheBW = new StreamMonitorOutIF()
+    val cacheNewReq = new StreamMonitorOutIF()
+  }
 }
 
 
@@ -140,6 +145,9 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   } .elsewhen(io.mode === SeyrekModes.START_INIT) {
     io.finished := inpVecLoader.finished
   }
+  val doMon = io.start & !io.finished
+  io.perfBE.cacheBW <> StreamMonitor(inpVecLoader.mainMem.memRdRsp, doMon, "cacheBW")
+  io.perfBE.cacheNewReq <> inpVecLoader.cacheNewReq
 }
 
 

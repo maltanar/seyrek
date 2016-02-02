@@ -15,7 +15,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   val numReadTxns = 8
   val numCacheTxns = 8
-  val numLines = 512
+  val numLines = 4096
 
   if(!isPow2(numLines))
     throw new Exception("Cache lines must be power of two")
@@ -212,6 +212,9 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val tagRespDest = Seq(missQ.enq, respQ.enq)
   tagRespQ.deq <> DecoupledOutputDemux(tagRespQ.deq.bits.isHit, tagRespDest)
 
+  // stats / performance counters
+  val doMon = io.start
+  io.cacheNewReq := StreamMonitor(newReqQ.deq, doMon, "cacheNewReq")
 
   // =========================================================================
   // debugging

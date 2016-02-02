@@ -2,6 +2,7 @@ package Seyrek
 
 import Chisel._
 import TidbitsDMA._
+import TidbitsStreams._
 
 // TODO there are various similarities between this and ContextMem for col-major
 // can we come up with an abstraction to unify the designs?
@@ -17,6 +18,8 @@ class InpVecLoaderIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val loadRsp = Decoupled(p.wu)
   // main memory access port
   val mainMem = new GenericMemoryMasterPort(p.mrp)
+  // stat ports
+  val cacheNewReq = new StreamMonitorOutIF()
 }
 
 // base abstract class for input vec. loaders
