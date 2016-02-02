@@ -15,7 +15,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   val numReadTxns = 8
   val numCacheTxns = 8
-  val numLines = 1024
+  val numLines = 512
 
   if(!isPow2(numLines))
     throw new Exception("Cache lines must be power of two")
@@ -27,6 +27,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val elemsPerLine = bytesPerLine / bytesPerElem
   val elemsPerMemWord = bytesPerMemWord / bytesPerElem
   val bitsPerLine = bytesPerLine * 8
+  val bitsPerMemWord = p.mrp.dataWidth
 
   val numOffsBits = log2Up(elemsPerLine)
   val numIndBits = log2Up(numLines)
@@ -53,7 +54,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     // response data if hit
     val data = UInt(width = p.valWidth)
 
-    override val printfStr = "id: %d ln: %d tag: %d hit: %d data: %d \n"
+    override val printfStr = "id: %d lineNum: %d tag: %d hit: %d data: %d \n"
     override val printfElems = {() => Seq(id, lineNum, tag, isHit, data)}
 
     override def cloneType: this.type = new CacheTagRsp().asInstanceOf[this.type]
@@ -93,7 +94,8 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   }
 
   // cacheline data
-  val datStore = Module(new DualPortBRAM(numIndBits+numOffsBits, p.mrp.dataWidth)).io
+  val datAddrBits = numIndBits+numOffsBits
+  val datStore = Module(new DualPortBRAM(datAddrBits, p.mrp.dataWidth)).io
   val datLat = 1
   val datRead = datStore.ports(0)
   val datWrite = datStore.ports(1)
@@ -156,6 +158,17 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   respQ.deq <> cloakroom.intIn
   cloakroom.extOut <> io.loadRsp
+
+  when(respQ.deq.ready & respQ.deq.valid) {
+    val rs = respQ.deq.bits
+    val rA = Cat(rs.tag, rs.lineNum, rs.offs)
+    val expVal = (rA+UInt(1)) * UInt(10)
+    when(expVal != rs.data) {
+      printf("***ERROR! exp val %d found %d, resp:\n", expVal, rs.data)
+      printf(rs.printfStr, rs.printfElems():_*)
+    }
+
+  }
 
   // ==========================================================================
   // tag lookup logic
@@ -241,7 +254,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
       val contextBase = UInt(INPUT, width = p.mrp.addrWidth)
       // access to tag and data memories
       val tagPort = new OCMMasterIF(numTagBits+1, numTagBits+1, numIndBits)
-      val dataPort = new OCMMasterIF(bitsPerLine, bitsPerLine, numIndBits)
+      val dataPort = new OCMMasterIF(bitsPerMemWord, bitsPerMemWord, datAddrBits)
       // checking against in-progress hits to lines
       val lineToCheck = UInt(OUTPUT, numIndBits)
       val isLineInUse = Bool(INPUT)
