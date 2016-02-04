@@ -6,9 +6,6 @@ import TidbitsOCM._
 import TidbitsStreams._
 import TidbitsMath._
 
-// TODO sanity-check whether scheduler and contextmem orderings match
-// TODO add ordering params to semirings as well?
-
 trait SeyrekParams {
   def accelName: String
   def numPEs: Int       // number of processing elements (PEs)
@@ -17,14 +14,11 @@ trait SeyrekParams {
   def valWidth: Int     // bitwidth of matrix/vector values
   val ptrWidth: Int = 64  // large enough for big&small platforms
   def mrp: MemReqParams
-  // context memory creation
-  def makeContextMemory: ReadChanParams => ContextMem
   // semiring operations
   def makeSemiringAdd: () => BinaryMathOp
   def makeSemiringMul: () => BinaryMathOp
   // scheduler-related
   def issueWindow: Int
-  def makeScheduler: () => Scheduler
   // type definitions for convenience, useful as clone types
   def v = UInt(width = valWidth)  // values
   def i = UInt(width = indWidth)  // index (context identifier / row index)

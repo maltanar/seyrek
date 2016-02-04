@@ -11,47 +11,6 @@ import TidbitsPlatformWrapper._
 import TidbitsMath._
 
 object ChannelConfigs {
-  val fourPortBRAM = Map(
-    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 1),
-    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 2),
-    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 3),
-    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 0),
-    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 0)
-  )
-
-  val fourPort = Map(
-    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 1),
-    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 2),
-    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 3)
-  )
-  val threePort = Map(
-    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 1),
-    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 1),
-    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 2),
-    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 0)
-  )
-  val twoPort = Map(
-    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem-r" -> ReadChanParams(maxReadTxns = 16, port = 1),
-    "ctxmem-w" -> ReadChanParams(maxReadTxns = 16, port = 1)
-  )
-  val onePort = Map(
-    "colptr" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "rowind" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "nzdata" -> ReadChanParams(maxReadTxns = 4, port = 0),
-    "inpvec" -> ReadChanParams(maxReadTxns = 2, port = 0),
-    "ctxmem-r" -> ReadChanParams(maxReadTxns = 8, port = 0),
-    "ctxmem-w" -> ReadChanParams(maxReadTxns = 8, port = 0)
-  )
   val csrTest = Map(
     "ptrs" -> ReadChanParams(maxReadTxns = 8, port = 2),
     "inds" -> ReadChanParams(maxReadTxns = 8, port = 3),
@@ -68,13 +27,6 @@ class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
   val indWidth = 32
   val valWidth = 64
   val mrp = p.toMemReqParams()
-  // unused
-  val makeContextMemory = { r: ReadChanParams =>
-    new BRAMContextMem(new BRAMContextMemParams(
-      depth = 1024, readLatency = 1, writeLatency = 1, chanID = r.chanBaseID ,
-      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
-    ))
-  }
 
   val makeSemiringAdd = { () =>
     new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
@@ -84,98 +36,16 @@ class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
     new SystolicSInt64Mul_5Stage()
   }
   val issueWindow = 8
-  val makeScheduler = { () => new InOrderScheduler(this) }
-}
-
-class UInt32BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
-  val accelName = "UInt32BRAMSpMV"
-  val numPEs = 1
-  val portsPerPE = 1
-  val chanConfig = ChannelConfigs.onePort
-  val indWidth = 32
-  val valWidth = 32
-  val mrp = p.toMemReqParams()
-  val makeContextMemory = { r: ReadChanParams =>
-    new BRAMContextMem(new BRAMContextMemParams(
-      depth = 1024, readLatency = 1, writeLatency = 1, chanID = r.chanBaseID ,
-      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
-    ))
-  }
-
-  val makeSemiringAdd = { () =>
-    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
-  }
-
-  val makeSemiringMul = { () =>
-    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a*b})
-  }
-  val issueWindow = 4
-  val makeScheduler = { () => new InOrderScheduler(this) }
-}
-
-class UInt64BRAMSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
-  val accelName = "UInt64BRAM"
-  val numPEs = 1
-  val portsPerPE = 4
-  val chanConfig = ChannelConfigs.fourPortBRAM
-  val indWidth = 32
-  val valWidth = 64
-  val mrp = p.toMemReqParams()
-  val makeContextMemory = { r: ReadChanParams =>
-    new BRAMContextMem(new BRAMContextMemParams(
-      depth = 1024, readLatency = 1, writeLatency = 1, chanID = r.chanBaseID ,
-      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
-    ))
-  }
-
-  val makeSemiringAdd = { () =>
-    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
-  }
-
-  val makeSemiringMul = { () =>
-    new SystolicSInt64Mul_5Stage()
-  }
-  val issueWindow = 16
-  val makeScheduler = { () => new InOrderScheduler(this) }
-}
-
-class UInt64ExtSpMVParams(p: PlatformWrapperParams) extends SeyrekParams {
-  val accelName = "UInt64ExtSpMV"
-  val numPEs = 1
-  val portsPerPE = 4
-  val chanConfig = ChannelConfigs.fourPort
-  val indWidth = 32
-  val valWidth = 64
-  val mrp = p.toMemReqParams()
-  val makeContextMemory = { r: ReadChanParams =>
-    new OoOExtContextMem(new ExtContextMemParams(
-      readTxns = r.maxReadTxns, writeTxns = r.maxReadTxns, chanID = r.chanBaseID,
-      idBits = indWidth, dataBits = valWidth, mrp = p.toMemReqParams()
-    ))
-  }
-
-  val makeSemiringAdd = { () =>
-    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
-  }
-
-  val makeSemiringMul = { () =>
-    new SystolicSInt64Mul_5Stage()
-  }
-  val issueWindow = 32
-  val makeScheduler = { () => new OoOComplScheduler(this) }
 }
 
 object SeyrekMainObj {
-  type AccelInstFxn = PlatformWrapperParams => SpMVAccel
+  type AccelInstFxn = PlatformWrapperParams => SpMVAccelCSR
   type AccelMap = Map[String, AccelInstFxn]
   type PlatformInstFxn = AccelInstFxn => PlatformWrapper
   type PlatformMap = Map[String, PlatformInstFxn]
 
   val accelMap: AccelMap  = Map(
-    "CSRTest" -> {p => new SpMVAccel(p, new CSRTestParams(p))},
-    "UInt32BRAM" -> {p => new SpMVAccel(p, new UInt32BRAMSpMVParams(p))},
-    "UInt64Ext" -> {p => new SpMVAccel(p, new UInt64ExtSpMVParams(p))},
-    "UInt64BRAM" -> {p => new SpMVAccel(p, new UInt64BRAMSpMVParams(p))}
+    "CSRTest" -> {p => new SpMVAccelCSR(p, new CSRTestParams(p))}
   )
 
   val platformMap: PlatformMap = Map(
