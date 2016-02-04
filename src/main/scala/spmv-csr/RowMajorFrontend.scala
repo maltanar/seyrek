@@ -102,8 +102,8 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   val resOpQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results back to ops
   val retQ = Module(new FPGAQueue(p.vi, 2)).io  // rows ready to retire
 
-  // rr arbiter for mixing 1- results into resQ
-  val resQArb = Module(new RRArbiter(p.vi, 2)).io
+  // rr arbiter for mixing 1- results into retQ
+  val retQArb = Module(new RRArbiter(p.vi, 2)).io
   val oneQ = Module(new FPGAQueue(p.vi, 2)).io  // injected ones
 
   // scheduler bookkeeping
@@ -129,19 +129,18 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   sched.write_tag := entryHead.i
 
   // determine whether this operand can enter the reducer, and in which mode
-  // - new one-length row (add to sched, write straight to the results)
+  // - new one-length row (write straight to the results)
   // - new regular row (add to sched, write to workQ)
   // - existing row (write to workQ)
-  val enterAsNew1 = !sched.hit & isRowSingleElem & hasFree & oneQ.enq.ready
+  val enterAsNew1 = isRowSingleElem & oneQ.enq.ready
   val enterAsNewReg = !sched.hit & !isRowSingleElem & hasFree & workQ.enq.ready
   val enterAsExisting = sched.hit & workQ.enq.ready
 
   io.operands.ready := enterAsNew1 | enterAsNewReg | enterAsExisting
 
   // set up oneQ entry
-  // IMPROVE: one-length rows can bypass scheduler entirely
   oneQ.enq.valid := io.operands.valid & enterAsNew1
-  oneQ.enq.bits.ind := freeSlot
+  oneQ.enq.bits.ind := entryHead.i
   oneQ.enq.bits.value := entryHead.v
 
   // set up workQ entry
@@ -150,7 +149,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   workQ.enq.bits.value := entryHead.v
 
   // add to scheduler when appropriate
-  when(io.operands.ready & io.operands.valid & !sched.hit) {
+  when(io.operands.ready & io.operands.valid & enterAsNewReg) {
     sched.write := Bool(true)
     regActualRowID(freeSlot) := entryHead.i
     regNZLeft(freeSlot) := entryHead.j
@@ -168,15 +167,11 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   opArb.out <> addQ.enq
   addQ.deq <> add.in
 
-  // the resQ arbiter creates a mix between the zero-length, one-length and add
-  // result queues
-  oneQ.deq <> resQArb.in(0)
   // need to manually connect here due to naming incompatibilities
-  resQArb.in(1).valid := add.out.valid
-  resQArb.in(1).bits.value := add.out.bits.v
-  resQArb.in(1).bits.ind := add.out.bits.i
-  add.out.ready := resQArb.in(1).ready
-  resQArb.out <> resQ.enq
+  resQ.enq.valid := add.out.valid
+  resQ.enq.bits.value := add.out.bits.v
+  resQ.enq.bits.ind := add.out.bits.i
+  add.out.ready := resQ.enq.ready
 
   // resQ goes into resOpQ or retQ, decided by isRowFinished
   val resQHeadNZLeft = regNZLeft(resQ.deq.bits.ind) // head # ops left
@@ -188,8 +183,13 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   resQ.deq <> resQDests.in
 
   resQDests.out(0) <> resOpQ.enq
-  resQDests.out(1) <> retQ.enq
-  retQ.enq.bits.ind := resQHeadRowID
+  oneQ.deq <> retQArb.in(0)
+  resQDests.out(1) <> retQArb.in(1)
+  // resQ retire: replace internal id with real row number
+  retQArb.in(1).bits.ind := resQHeadRowID
+
+  // the retQ arbiter mixes oneQ and ready-to-retire from resQ into retQ
+  retQArb.out <> retQ.enq
 
   // the resOpQ flows into a demuxer for joining up with the operands via the
   // upsizers
@@ -273,33 +273,6 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
 
   // printfs for debugging ====================================================
   if(verbose_debug) {
-    /*
-    printf("====================================================\n")
-    printf("queue counts: wq = %d addq = %d resq = %d retq = %d resOpQ = %d zeroQ = %d oneQ = %d \n",
-      workQ.count, addQ.count, resQ.count, retQ.count, resOpQ.count, zeroQ.count, oneQ.count
-    )
-    printf("opQ counts: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", counts(i))}
-    printf("\n")
-
-    printf("ups counts: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d %d : ", ups(i).aCount, ups(i).bCount )}
-    printf("\n")
-
-    printf("scheduler valid bits: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", sched.valid_bits(i))}
-    printf("\n")
-
-    printf("rowID for each slot: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", regActualRowID(i))}
-    printf("\n")
-
-    printf("nz counts (may be unoccupied): \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", regNZLeft(i))}
-    printf("\n")
-    */
-
-
     when(oneQ.enq.ready & oneQ.enq.valid) {
       printf("issued 1-entry for slot %d val %d\n",
         oneQ.enq.bits.ind, oneQ.enq.bits.value)
