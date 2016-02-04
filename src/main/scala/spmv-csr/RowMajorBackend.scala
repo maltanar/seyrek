@@ -28,21 +28,6 @@ class RowMajorBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
 class RowMajorBackend(p: SeyrekParams) extends Module {
   val io = new RowMajorBackendIO(p)
 
-  // instantiate result writer -- TODO parametrize type?
-  val resWriter = Module(new ResultWriterSimple(p)).io
-  io.csr <> resWriter.csr
-
-  // give reducer results to result writer
-  io.results <> resWriter.results
-
-  // give the memory write port to the result writer
-  resWriter.memWrReq <> io.mainMem(0).memWrReq
-  resWriter.memWrDat <> io.mainMem(0).memWrDat
-  io.mainMem(0).memWrRsp <> resWriter.memWrRsp
-
-  resWriter.start := io.start
-  resWriter.mode := io.mode
-
   // set up the multichannel memory system
   val memsys = Module(new MultiChanMultiPort(p.mrp, p.portsPerPE,
     chans = p.chanConfig))
@@ -96,7 +81,6 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   // generate two copies of the row length stream
   StreamCopy(rowlens, rowLenToRepQ.enq, rowLenQ.enq)
 
-
   val rowIndLenNoRep = StreamJoin(rowIndNoRep, rowLenQ.deq, p.ii,
     {(ri: UInt, rl: UInt) => IndIndPair(ri, rl)}
   )
@@ -148,6 +132,32 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   readNZData.io.start := startRegular
   readNZData.io.baseAddr := io.csr.nzData
   readNZData.io.byteCount := bytesVal * io.csr.nz
+
+  // count the number of zero-length rows
+  val regNumZeroRows = Reg(init = UInt(0, 32))
+  when(io.start & io.mode === SeyrekModes.START_INIT) {
+    regNumZeroRows := UInt(0)
+  } .elsewhen(rowlens.valid & rowlens.ready & rowlens.bits === UInt(0)) {
+    regNumZeroRows := regNumZeroRows + UInt(1)
+  }
+
+  // instantiate result writer -- TODO parametrize type
+  val resWriter = Module(new ResultWriterSimple(p)).io
+  io.csr <> resWriter.csr
+  // resWriter counts to csr.rows for completion detection, but zero-length
+  // rows produce no work. remedy this:
+  resWriter.csr.rows := io.csr.rows - regNumZeroRows
+
+  // give reducer results to result writer
+  io.results <> resWriter.results
+
+  // give the memory write port to the result writer
+  resWriter.memWrReq <> io.mainMem(0).memWrReq
+  resWriter.memWrDat <> io.mainMem(0).memWrDat
+  io.mainMem(0).memWrRsp <> resWriter.memWrRsp
+
+  resWriter.start := io.start
+  resWriter.mode := io.mode
 
   io.finished := Bool(true)
 
