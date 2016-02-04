@@ -7,10 +7,8 @@ import TidbitsStreams._
 
 class RowMajorFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csr = new CSRSpMV(p).asInput
-  // length of each row, in-order
-  val rowLen = Decoupled(p.i).flip
   // work units to the reducer
-  val workUnits = Decoupled(p.wu).flip
+  val workUnits = Decoupled(p.wul).flip
   // results, row-value pairs
   val results = Decoupled(p.vi)
 }
@@ -38,8 +36,6 @@ class DummyRowMajorFrontend(p: SeyrekParams) extends Module {
   io.results.bits.ind := seq.bits
   seq.ready := io.results.ready
 
-  io.rowLen.ready := Bool(true)
-
   when(io.results.ready & io.results.valid & io.results.bits.ind === UInt(0)) {
     printf("Warning: using dummy frontend\n")
   }
@@ -61,19 +57,277 @@ class RowMajorFrontend(p: SeyrekParams) extends Module {
 
   // add row numbers to create the (rownumber, rowlength) input to reducer
   val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
-  val rownums = NaturalNumbers(p.indWidth, startRegular, io.csr.rows)
-
-  // this queue is needed to decouple the consumption rate of the backend
-  // rowLen stream from the consumption rate of the reducer
-  // TODO make parametrizable?
-  val rowLen = FPGAQueue(io.rowLen, 16)
-
-  StreamJoin(inA = rownums, inB = rowLen, genO = p.ii,
-    join = {(a: UInt, b: UInt) => IndIndPair(a,b) }
-  ) <> red.rowLen
 
   // push out results from reducer
   red.results <> io.results
+}
+
+// note that the name "RowMajorFrontend" is a slight misnomer; the design will
+// support small deviations from row-major (needed to support out-of-order
+//  data returns from the x read)
+class RowMajorReducer(p: SeyrekParams) extends Module {
+  val verbose_debug = false
+  val io = new Bundle {
+    // partial products in
+    val operands = Decoupled(p.vii).flip
+    // results out
+    val results = Decoupled(p.vi)
+  }
+  // op queue = b queue of the upsizer
+  // upsizer for issuing add ops. inA from the adder, inB from the opQ
+  val ups = Vec.fill(p.issueWindow) {Module(new RowMajorReducerUpsizer(p)).io}
+  // demux for the upsizer stream inputs
+  val upsEntrySel = UInt(width = log2Up(p.issueWindow))
+  val upsEntry = DecoupledOutputDemux(upsEntrySel, ups.map(_.inA))
+  upsEntrySel := upsEntry.bits.ind
+  // round robin arbiter for popping the op pairs for the adder
+  val opArb = Module(new RRArbiter(p.wu, p.issueWindow)).io
+  // signal for controlling the enq index to the opQ's
+  val opQEnqSel = UInt(width = log2Up(p.issueWindow))
+  // demuxer for enq into op queues
+  val opQEnq = DecoupledOutputDemux(opQEnqSel, ups.map(x => x.inB))
+
+  for(i <- 0 until p.issueWindow) {
+    ups(i).out <> opArb.in(i)
+  }
+  // count of each op queue, useful for debug
+  val counts = Vec(ups.map(x => x.bCount))
+
+  // the adder as defined by the semiring
+  val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
+  // queue that keeps the operands with translated IDs
+  val workQ = Module(new FPGAQueue(p.vi, 2)).io
+  val addQ = Module(new FPGAQueue(p.wu, 2)).io  // adder inputs
+  val resQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results
+  val resOpQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results back to ops
+  val retQ = Module(new FPGAQueue(p.vi, 2)).io  // rows ready to retire
+
+  // rr arbiter for mixing 1- results into resQ
+  val resQArb = Module(new RRArbiter(p.vi, 2)).io
+  val oneQ = Module(new FPGAQueue(p.vi, 2)).io  // injected ones
+
+  // scheduler bookkeeping
+  // the row major reducer uses a scheduler to keep track of the status of each
+  // row: may be several rows in the reducer at a time due to out-of-order
+  val sched = Module(new CAM(entries = p.issueWindow, tag_bits = p.indWidth)).io
+  val regNZLeft = Vec.fill(p.issueWindow) { Reg(init = UInt(0, p.indWidth)) }
+  val regActualRowID = Vec.fill(p.issueWindow) { Reg(init = UInt(0, p.indWidth)) }
+
+  // =========================================================================
+  // entry into scheduler
+  val entryHead = io.operands.bits
+  val hasFree = sched.hasFree
+  val freeSlot = sched.freeInd
+  val isRowSingleElem = (entryHead.j === UInt(1))
+  val hitSlot = PriorityEncoder(sched.hits)
+
+  // check if this row is already being reduced
+  sched.tag := entryHead.i
+
+  // be prepared for adding to the scheduler
+  sched.write := Bool(false)
+  sched.write_tag := entryHead.i
+
+  // determine whether this operand can enter the reducer, and in which mode
+  // - new one-length row (add to sched, write straight to the results)
+  // - new regular row (add to sched, write to workQ)
+  // - existing row (write to workQ)
+  val enterAsNew1 = !sched.hit & isRowSingleElem & hasFree & oneQ.enq.ready
+  val enterAsNewReg = !sched.hit & !isRowSingleElem & hasFree & workQ.enq.ready
+  val enterAsExisting = sched.hit & workQ.enq.ready
+
+  io.operands.ready := enterAsNew1 | enterAsNewReg | enterAsExisting
+
+  // set up oneQ entry
+  // IMPROVE: one-length rows can bypass scheduler entirely
+  oneQ.enq.valid := io.operands.valid & enterAsNew1
+  oneQ.enq.bits.ind := freeSlot
+  oneQ.enq.bits.value := entryHead.v
+
+  // set up workQ entry
+  workQ.enq.valid := io.operands.valid & (enterAsNewReg | enterAsExisting)
+  workQ.enq.bits.ind := Mux(sched.hit, hitSlot, freeSlot)
+  workQ.enq.bits.value := entryHead.v
+
+  // add to scheduler when appropriate
+  when(io.operands.ready & io.operands.valid & !sched.hit) {
+    sched.write := Bool(true)
+    regActualRowID(freeSlot) := entryHead.i
+    regNZLeft(freeSlot) := entryHead.j
+  }
+
+  // ==========================================================================
+  // main reducer datapath
+
+  // workQ flows directly into the operand queues
+  workQ.deq <> opQEnq
+  opQEnqSel := opQEnq.bits.ind  // selected according to ind
+
+  // the opArb arbiter pulls out operand pairs that are ready to go, and puts
+  // them into the addQ
+  opArb.out <> addQ.enq
+  addQ.deq <> add.in
+
+  // the resQ arbiter creates a mix between the zero-length, one-length and add
+  // result queues
+  oneQ.deq <> resQArb.in(0)
+  // need to manually connect here due to naming incompatibilities
+  resQArb.in(1).valid := add.out.valid
+  resQArb.in(1).bits.value := add.out.bits.v
+  resQArb.in(1).bits.ind := add.out.bits.i
+  add.out.ready := resQArb.in(1).ready
+  resQArb.out <> resQ.enq
+
+  // resQ goes into resOpQ or retQ, decided by isRowFinished
+  val resQHeadNZLeft = regNZLeft(resQ.deq.bits.ind) // head # ops left
+  val resQHeadRowID = regActualRowID(resQ.deq.bits.ind) // head row id
+  val isRowFinished = (resQHeadNZLeft <= UInt(2))
+
+  val resQDests = Module(new DecoupledOutputDemux(p.vi, 2)).io
+  resQDests.sel := isRowFinished
+  resQ.deq <> resQDests.in
+
+  resQDests.out(0) <> resOpQ.enq
+  resQDests.out(1) <> retQ.enq
+  retQ.enq.bits.ind := resQHeadRowID
+
+  // the resOpQ flows into a demuxer for joining up with the operands via the
+  // upsizers
+  resOpQ.deq <> upsEntry
+
+  // remove from scheduler when all operations completed
+  sched.clear_tag := resQHeadRowID
+  sched.clear_hit := Bool(false)
+
+  when(resQ.deq.valid & resQ.deq.ready) {
+    when(isRowFinished) { sched.clear_hit := Bool(true) }
+    sched.clear_hit := isRowFinished
+    // decrement the # operations left for the head row
+    resQHeadNZLeft := resQHeadNZLeft - UInt(1)
+  }
+
+  // expose results
+  retQ.deq <> io.results
+
+  // ==========================================================================
+  // various sanity checks
+
+  def printScheduler() = {
+    printf("Scheduler dump: \n")
+    for(i <- 0 until p.issueWindow) {
+      printf("%d: valid=%d rowNum=%d nzLeft=%d \n",
+        UInt(i), sched.valid_bits(i), regActualRowID(i), regNZLeft(i)
+      )
+    }
+    printf("=============================================================\n")
+  }
+
+  // cannot enter in more than one way
+  when(io.operands.ready & io.operands.valid) {
+    val entWays = Cat(enterAsNewReg, enterAsNew1, enterAsExisting)
+    when(PopCount(entWays) > UInt(1)) {
+      printf("***ERROR! Entering in multiple ways: %b \n", entWays)
+    }
+  }
+
+  // each entry should be found only once in the scheduler
+  when(PopCount(sched.hits) > UInt(1)) {
+    printf("***ERROR! Found multiple scheduler hits for %d\n",
+      sched.tag
+    )
+    printScheduler()
+  }
+
+  when(resQ.deq.valid & resQ.deq.ready & isRowFinished &
+    (ups(resQ.deq.bits.ind).aCount != UInt(0) ||
+      ups(resQ.deq.bits.ind).bCount != UInt(0))
+    ) {
+    printf("***ERROR! retiring element %d still has stuff in queue\n",
+      resQ.deq.bits.ind
+    )
+    printScheduler()
+  }
+
+  when(opQEnq.ready & opQEnq.valid & regNZLeft(opQEnq.bits.ind) < UInt(2)) {
+    printf("***ERROR! This should not go to opQ: %d %d \n",
+      opQEnq.bits.ind, opQEnq.bits.value
+    )
+    printScheduler()
+  }
+
+  when(addQ.enq.ready & addQ.enq.valid &
+    regNZLeft(addQ.enq.bits.rowInd) < UInt(2)
+  ) {
+    printf("***ERROR! This should not go to addQ: %d \n",
+      addQ.enq.bits.rowInd
+    )
+    printScheduler()
+  }
+
+  when(resQ.deq.valid & !sched.valid_bits(resQ.deq.bits.ind)) {
+    printf("***ERROR! resQ has result from invalid slot %d val %d \n",
+      resQ.deq.bits.ind, resQ.deq.bits.value
+    )
+    printScheduler()
+  }
+
+  // printfs for debugging ====================================================
+  if(verbose_debug) {
+    /*
+    printf("====================================================\n")
+    printf("queue counts: wq = %d addq = %d resq = %d retq = %d resOpQ = %d zeroQ = %d oneQ = %d \n",
+      workQ.count, addQ.count, resQ.count, retQ.count, resOpQ.count, zeroQ.count, oneQ.count
+    )
+    printf("opQ counts: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", counts(i))}
+    printf("\n")
+
+    printf("ups counts: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d %d : ", ups(i).aCount, ups(i).bCount )}
+    printf("\n")
+
+    printf("scheduler valid bits: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", sched.valid_bits(i))}
+    printf("\n")
+
+    printf("rowID for each slot: \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", regActualRowID(i))}
+    printf("\n")
+
+    printf("nz counts (may be unoccupied): \n")
+    for(i <- 0 until p.issueWindow) {printf("%d ", regNZLeft(i))}
+    printf("\n")
+    */
+
+
+    when(oneQ.enq.ready & oneQ.enq.valid) {
+      printf("issued 1-entry for slot %d val %d\n",
+        oneQ.enq.bits.ind, oneQ.enq.bits.value)
+    }
+
+    when (workQ.enq.valid & workQ.enq.ready) {
+      printf("Entered workQ: row=%d id=%d value=%d \n",
+        entryHead.i, workQ.enq.bits.ind, workQ.enq.bits.value)
+    }
+
+    when(opQEnq.ready & opQEnq.valid) {
+      printf("add to opQ %d, value %d \n", opQEnqSel, opQEnq.bits.value)
+    }
+
+    when(addQ.enq.valid & addQ.enq.ready) {
+      printf("enter addQ: id %d val1 %d val2 %d \n",
+      addQ.enq.bits.rowInd, addQ.enq.bits.matrixVal, addQ.enq.bits.vectorVal)
+    }
+
+    when(resQ.deq.valid & resQ.deq.ready) {
+      printf("removed from resQ, id %d NZLeft %d isFinished %d\n",
+      resQ.deq.bits.ind, resQHeadNZLeft, isRowFinished)
+    }
+
+    when(retQ.enq.valid & retQ.enq.ready) {
+      printf("retire: rowind %d sum %d \n", retQ.enq.bits.ind, retQ.enq.bits.value)
+    }
+  }
 }
 
 // produce a pair of operands for an associative op from an incoming pair of
@@ -155,265 +409,4 @@ class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
     inA = qA.deq, inB = qB.deq, genO = p.wu,
     join = {(a: ValIndPair, b: ValIndPair) => WorkUnit(a.value, b.value, a.ind)}
   ) <> io.out
-}
-
-// note that the name "RowMajorFrontend" is a slight misnomer; the design will
-// support small deviations from row-major (needed to support out-of-order
-//  data returns from the x read)
-class RowMajorReducer(p: SeyrekParams) extends Module {
-  val verbose_debug = false
-  val io = new Bundle {
-    // length of each row. indA = row number, indB = num nonzeroes in row
-    val rowLen = Decoupled(p.ii).flip
-    // partial products in
-    val operands = Decoupled(p.vi).flip
-    // results out
-    val results = Decoupled(p.vi)
-  }
-  // op queue = b queue of the upsizer
-  // upsizer for issuing add ops. inA from the adder, inB from the opQ
-  val ups = Vec.fill(p.issueWindow) {Module(new RowMajorReducerUpsizer(p)).io}
-  // demux for the upsizer stream inputs
-  val upsEntrySel = UInt(width = log2Up(p.issueWindow))
-  val upsEntry = DecoupledOutputDemux(upsEntrySel, ups.map(_.inA))
-  upsEntrySel := upsEntry.bits.ind
-  // round robin arbiter for popping the op pairs for the adder
-  val opArb = Module(new RRArbiter(p.wu, p.issueWindow)).io
-  // signal for controlling the enq index to the opQ's
-  val opQEnqSel = UInt(width = log2Up(p.issueWindow))
-  // demuxer for enq into op queues
-  val opQEnq = DecoupledOutputDemux(opQEnqSel, ups.map(x => x.inB))
-
-  for(i <- 0 until p.issueWindow) {
-    ups(i).out <> opArb.in(i)
-  }
-  // count of each op queue, useful for debug
-  val counts = Vec(ups.map(x => x.bCount))
-
-  // the adder as defined by the semiring
-  val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
-  // queue that keeps the operands with translated IDs
-  val workQ = Module(new FPGAQueue(p.vi, 2)).io
-  val addQ = Module(new FPGAQueue(p.wu, 2)).io  // adder inputs
-  val resQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results
-  val resOpQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results back to ops
-  val retQ = Module(new FPGAQueue(p.vi, 2)).io  // rows ready to retire
-
-  // rr arbiter for mixing 1- and 0-length results into resQ
-  val resQArb = Module(new RRArbiter(p.vi, 3)).io
-  val zeroQ = Module(new FPGAQueue(p.vi, 2)).io // injected zeroes
-  val oneQ = Module(new FPGAQueue(p.vi, 2)).io  // injected ones
-
-  // scheduler bookkeeping
-  // the row major reducer uses a scheduler to keep track of the status of each
-  // row: may be several rows in the reducer at a time due to out-of-order
-  val sched = Module(new CAM(entries = p.issueWindow, tag_bits = p.indWidth)).io
-  val regNZLeft = Vec.fill(p.issueWindow) { Reg(init = UInt(0, p.indWidth)) }
-  val regActualRowID = Vec.fill(p.issueWindow) { Reg(init = UInt(0, p.indWidth)) }
-
-  // ******************** reducer logic ************************
-
-
-  // entry into scheduler: new rowLen becomes available
-  val freeSlot = sched.freeInd
-  // check both against scheduler and zeroQ
-  io.rowLen.ready := sched.hasFree & zeroQ.enq.ready
-  // use the row index as the CAM tag
-  sched.write_tag := io.rowLen.bits.indA
-  sched.write := Bool(false)
-
-  // emit a zero if this row had no nonzero elements
-  val isZeroRow = io.rowLen.bits.indB === UInt(0)
-  zeroQ.enq.valid := isZeroRow & io.rowLen.valid & sched.hasFree
-  zeroQ.enq.bits.value := UInt(0) // TODO semiring zero
-  zeroQ.enq.bits.ind := freeSlot  // zeroQ elem will be generated on sched ins.
-
-  when(io.rowLen.ready & io.rowLen.valid) {
-    sched.write := Bool(true) // add entry into scheduler
-    regNZLeft(freeSlot) := io.rowLen.bits.indB // # nonzeroes left
-    // TODO duplicate this regNZLeft to control both ins and outs
-    // also save rowid in register for easy access
-    regActualRowID(freeSlot) := io.rowLen.bits.indA
-  }
-
-  // new op for existing scheduler entry received
-  // - check if exists in scheduler
-  // - if so, translate row number into scheduler entry number and put in redQ
-  // - special case: put into oneQ if this was a one-element row
-
-  sched.tag := io.operands.bits.ind
-  val schedEntryNum = PriorityEncoder(sched.hits) // entry where rowid is found
-  val isRowSingleElem = regNZLeft(schedEntryNum) === UInt(1)
-  val targetReady = (isRowSingleElem & oneQ.enq.ready)  | (!isRowSingleElem & workQ.enq.ready)
-  io.operands.ready := sched.hit & targetReady
-
-  // enqueue operand into oneQ if this is a single-element row
-  oneQ.enq.valid := io.operands.valid & sched.hit & isRowSingleElem
-  oneQ.enq.bits.ind := schedEntryNum  // translate row number into scheduler entry number
-  oneQ.enq.bits.value := io.operands.bits.value
-
-  // enqueue operand into workQ for all else
-  workQ.enq.valid := io.operands.valid & sched.hit & !isRowSingleElem
-  workQ.enq.bits.ind := schedEntryNum // translate row number into scheduler entry number
-  workQ.enq.bits.value := io.operands.bits.value
-
-  // TODO check number of operands entering for sanity/error checking?
-
-  // workQ flows directly into the operand queues
-  workQ.deq <> opQEnq
-  opQEnqSel := opQEnq.bits.ind  // selected according to ind
-
-  // the opArb arbiter pulls out operand pairs that are ready to go, and puts
-  // them into the addQ
-  opArb.out <> addQ.enq
-  addQ.deq <> add.in
-
-  // the resQ arbiter creates a mix between the zero-length, one-length and add
-  // result queues
-  zeroQ.deq <> resQArb.in(0)
-  oneQ.deq <> resQArb.in(1)
-  add.out <> resQArb.in(2)
-  resQArb.out <> resQ.enq
-
-  // resQ goes into resOpQ or retQ, decided by isRowFinished
-  val resQHeadNZLeft = regNZLeft(resQ.deq.bits.ind) // head # ops left
-  val resQHeadRowID = regActualRowID(resQ.deq.bits.ind) // head row id
-  val isRowFinished = (resQHeadNZLeft <= UInt(2))
-
-  val resQDests = Module(new DecoupledOutputDemux(p.vi, 2)).io
-  resQDests.sel := isRowFinished
-  resQ.deq <> resQDests.in
-
-  resQDests.out(0) <> resOpQ.enq
-  resQDests.out(1) <> retQ.enq
-  retQ.enq.bits.ind := resQHeadRowID
-
-  // the resOpQ flows into a demuxer for joining up with the operands via the
-  // upsizers
-  resOpQ.deq <> upsEntry
-
-  // remove from scheduler when all operations completed
-  sched.clear_tag := resQHeadRowID
-  sched.clear_hit := Bool(false)
-
-  when(resQ.deq.valid & resQ.deq.ready) {
-    when(isRowFinished) { sched.clear_hit := Bool(true) }
-    sched.clear_hit := isRowFinished
-    // decrement the # operations left for the head row
-    resQHeadNZLeft := resQHeadNZLeft - UInt(1)
-  }
-
-  // expose results
-  retQ.deq <> io.results
-
-  // sanity check: each entry should be found only once in the scheduler
-  when(PopCount(sched.hits) > UInt(1)) {
-    printf("***ERROR! Found multiple scheduler hits for %d\n",
-      sched.tag
-    )
-  }
-  // other sanity checks
-  when(resQ.deq.valid & resQ.deq.ready & isRowFinished &
-    (ups(resQ.deq.bits.ind).aCount != UInt(0) ||
-      ups(resQ.deq.bits.ind).bCount != UInt(0))
-    ) {
-    printf("***ERROR! retiring element %d still has stuff in queue\n",
-      resQ.deq.bits.ind
-    )
-  }
-
-  when(workQ.enq.ready & workQ.enq.valid &
-    regNZLeft(workQ.enq.bits.ind) < UInt(2)
-  ) {
-    printf("***ERROR! This should not go to workQ: %d %d \n",
-      workQ.enq.bits.ind, workQ.enq.bits.value
-    )
-  }
-
-  when(opQEnq.ready & opQEnq.valid & regNZLeft(opQEnq.bits.ind) < UInt(2)) {
-    printf("***ERROR! This should not go to opQ: %d %d \n",
-      opQEnq.bits.ind, opQEnq.bits.value
-    )
-  }
-
-  when(addQ.enq.ready & addQ.enq.valid &
-    regNZLeft(addQ.enq.bits.rowInd) < UInt(2)
-  ) {
-    printf("***ERROR! This should not go to addQ: %d \n",
-      addQ.enq.bits.rowInd
-    )
-  }
-
-  when(resQ.deq.valid & !sched.valid_bits(resQ.deq.bits.ind)) {
-    printf("***ERROR! resQ has result from invalid slot %d val %d \n",
-      resQ.deq.bits.ind, resQ.deq.bits.value
-    )
-  }
-
-  // printfs for debugging ====================================================
-  if(verbose_debug) {
-    /*
-    printf("====================================================\n")
-    printf("queue counts: wq = %d addq = %d resq = %d retq = %d resOpQ = %d zeroQ = %d oneQ = %d \n",
-      workQ.count, addQ.count, resQ.count, retQ.count, resOpQ.count, zeroQ.count, oneQ.count
-    )
-    printf("opQ counts: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", counts(i))}
-    printf("\n")
-
-    printf("ups counts: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d %d : ", ups(i).aCount, ups(i).bCount )}
-    printf("\n")
-
-    printf("scheduler valid bits: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", sched.valid_bits(i))}
-    printf("\n")
-
-    printf("rowID for each slot: \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", regActualRowID(i))}
-    printf("\n")
-
-    printf("nz counts (may be unoccupied): \n")
-    for(i <- 0 until p.issueWindow) {printf("%d ", regNZLeft(i))}
-    printf("\n")
-    */
-
-    when(io.rowLen.ready & io.rowLen.valid) {
-      printf("scheduler add: slot = %d rowid = %d rowlen = %d\n",
-        freeSlot, io.rowLen.bits.indA, io.rowLen.bits.indB)
-    }
-
-    when(zeroQ.enq.ready & zeroQ.enq.valid) {
-      printf("issued 0-entry for slot %d\n", zeroQ.enq.bits.ind)
-    }
-
-    when(oneQ.enq.ready & oneQ.enq.valid) {
-      printf("issued 1-entry for slot %d val %d\n",
-        oneQ.enq.bits.ind, oneQ.enq.bits.value)
-    }
-
-    when(io.operands.valid & !sched.hit) {
-      printf("op from row %d can't enter, not in sched\n", io.operands.bits.ind)
-    } .elsewhen (workQ.enq.valid & workQ.enq.ready) {
-      printf("entered workQ: id %d value %d \n", schedEntryNum, io.operands.bits.value)
-    }
-
-    when(opQEnq.ready & opQEnq.valid) {
-      printf("add to opQ %d, value %d \n", opQEnqSel, opQEnq.bits.value)
-    }
-
-    when(addQ.enq.valid & addQ.enq.ready) {
-      printf("enter addQ: id %d val1 %d val2 %d \n",
-      addQ.enq.bits.rowInd, addQ.enq.bits.matrixVal, addQ.enq.bits.vectorVal)
-    }
-
-    when(resQ.deq.valid & resQ.deq.ready) {
-      printf("removed from resQ, id %d NZLeft %d isFinished %d\n",
-      resQ.deq.bits.ind, resQHeadNZLeft, isRowFinished)
-    }
-
-    when(retQ.enq.valid & retQ.enq.ready) {
-      printf("retire: rowind %d sum %d \n", retQ.enq.bits.ind, retQ.enq.bits.value)
-    }
-  }
 }

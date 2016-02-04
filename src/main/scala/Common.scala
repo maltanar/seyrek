@@ -23,10 +23,12 @@ trait SeyrekParams {
   def v = UInt(width = valWidth)  // values
   def i = UInt(width = indWidth)  // index (context identifier / row index)
   def wu = new WorkUnit(valWidth, indWidth) // (value, value, index)
+  def wul = new WorkUnitAndLen(valWidth, indWidth) // work unit plus row len
   def vi = new ValIndPair(valWidth, indWidth) // (value, index)
   def vv = new BinaryMathOperands(valWidth) // (value, value)
   def ii = new IndIndPair(indWidth) // (index, index)
   def vii = new ValIndInd(valWidth, indWidth) // (value, index, index)
+  def viil = new ValIndIndLen(valWidth, indWidth) // ValIndInd and row len
   // channel-to-port mapping
    def chanConfig: Map[String, ReadChanParams]
 }
@@ -49,6 +51,23 @@ object ValIndInd {
   }
 }
 
+class ValIndIndLen(valWidth: Int, indWidth: Int) extends ValIndInd(valWidth, indWidth) {
+  val rl = UInt(width = indWidth)
+
+  override def cloneType: this.type = new ValIndIndLen(valWidth, indWidth).asInstanceOf[this.type]
+}
+
+object ValIndIndLen {
+  def apply(v: UInt, i: UInt, j: UInt, rl: UInt): ValIndIndLen = {
+    val viil = new ValIndIndLen(v.getWidth(), i.getWidth())
+    viil.v := v
+    viil.i := i
+    viil.j := j
+    viil.rl := rl
+    viil
+  }
+}
+
 class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
   val matrixVal = UInt(width = valWidth)
   val vectorVal = UInt(width = valWidth)
@@ -57,12 +76,30 @@ class WorkUnit(valWidth: Int, indWidth: Int) extends Bundle {
   override def cloneType: this.type = new WorkUnit(valWidth, indWidth).asInstanceOf[this.type]
 }
 
+class WorkUnitAndLen(valWidth: Int, indWidth: Int) extends WorkUnit(valWidth, indWidth) {
+  val rowLen = UInt(width = indWidth)
+
+  override def cloneType: this.type = new WorkUnitAndLen(valWidth, indWidth).asInstanceOf[this.type]
+}
+
 object WorkUnit {
   def apply(m: UInt, v: UInt, i: UInt): WorkUnit = {
     val workUnit = new WorkUnit(v.getWidth(), i.getWidth())
     workUnit.matrixVal := m
     workUnit.vectorVal := v
     workUnit.rowInd := i
+
+    workUnit
+  }
+}
+
+object WorkUnitAndLen {
+  def apply(m: UInt, v: UInt, i: UInt, rl: UInt): WorkUnitAndLen = {
+    val workUnit = new WorkUnitAndLen(v.getWidth(), i.getWidth())
+    workUnit.matrixVal := m
+    workUnit.vectorVal := v
+    workUnit.rowInd := i
+    workUnit.rowLen := rl
     workUnit
   }
 }
@@ -106,20 +143,20 @@ object ValIndPair {
 // pipeline through a FIFO queue, capacity = latency)
 
 class ContextfulSemiringOpIO(p: SeyrekParams) extends Bundle {
-  val in = Decoupled(p.wu).flip
-  val out = Decoupled(p.vi)
+  val in = Decoupled(p.wul).flip
+  val out = Decoupled(p.vii)
 }
 
 class ContextfulSemiringOp(p: SeyrekParams, instFxn: () => BinaryMathOp)
 extends Module {
   val io = new ContextfulSemiringOpIO(p)
   val opInst = Module(instFxn())
-  val forker = Module(new StreamFork(genIn = p.wu, genA = p.vv, genB = p.i,
-    forkA = {wu: WorkUnit => BinaryMathOperands(wu.matrixVal, wu.vectorVal)},
-    forkB = {wu: WorkUnit => wu.rowInd}
+  val forker = Module(new StreamFork(genIn = p.wul, genA = p.vv, genB = p.ii,
+    forkA = {wu: WorkUnitAndLen => BinaryMathOperands(wu.matrixVal, wu.vectorVal)},
+    forkB = {wu: WorkUnitAndLen => IndIndPair(wu.rowInd, wu.rowLen)}
   )).io
-  val joiner = Module(new StreamJoin(genA = p.v, genB = p.i, genOut = p.vi,
-    join = {(v: UInt, i: UInt) => ValIndPair(v, i)}
+  val joiner = Module(new StreamJoin(genA = p.v, genB = p.ii, genOut = p.vii,
+    join = {(v: UInt, ij: IndIndPair) => ValIndInd(v, ij.indA, ij.indB)}
   )).io
 
   io.in <> forker.in
@@ -136,7 +173,7 @@ extends Module {
     // WEIRD: observed throughput issues without the constant +2, so keeping
     // it like this for the time being
     val qCap = opInst.latency + 2
-    val indQ = Module(new FPGAQueue(p.i, qCap)).io
+    val indQ = Module(new FPGAQueue(p.ii, qCap)).io
     forker.outB <> indQ.enq
     indQ.deq <> joiner.inB
   }

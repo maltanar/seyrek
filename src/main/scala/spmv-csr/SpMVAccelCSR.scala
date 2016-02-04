@@ -46,7 +46,6 @@ extends GenericAccelerator(p) {
       backend.io.mainMem(mp) <> io.memPort(i * pSeyrek.portsPerPE + mp)
 
     ioPE.csr <> frontend.io.csr
-    backend.io.rowLen <> frontend.io.rowLen
     backend.io.workUnits <> frontend.io.workUnits
     frontend.io.results <> backend.io.results
 

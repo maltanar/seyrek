@@ -10,7 +10,7 @@ class RowMajorBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   // output to frontend -- length of each row, in order
   val rowLen = Decoupled(p.i)
   // output to frontend -- work units
-  val workUnits = Decoupled(p.wu)
+  val workUnits = Decoupled(p.wul)
   // input from frontend -- received results, row-value pairs
   val results = Decoupled(p.vi).flip
   // context init
@@ -89,20 +89,30 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
   // use the row pointers to generate row lengths with StreamDelta
   val rowlens = StreamDelta(readRowPtr.io.out)
-  val rowLenQ = Module(new FPGAQueue(p.i, 2)).io
-  // need two copies of the row length stream: one for backend, one for frontend
-  StreamCopy(rowlens, io.rowLen, rowLenQ.enq)
-  // generate row inds for backend (will be repeated to form rowInds)
+  // generate row inds
   val rowIndNoRep = NaturalNumbers(p.indWidth, startRegular, io.csr.rows)
-  // repeat to generate the row inds
-  val rowInds = StreamRepeatElem(rowIndNoRep, rowLenQ.deq)  // the j stream
+  val rowLenQ = Module(new FPGAQueue(p.i, 2)).io
+  val rowLenToRepQ = Module(new FPGAQueue(p.i, 8)).io
+  // generate two copies of the row length stream
+  StreamCopy(rowlens, rowLenToRepQ.enq, rowLenQ.enq)
 
-  // synchronize streams to form a v-i-i structure (Aij, i, j)
+
+  val rowIndLenNoRep = StreamJoin(rowIndNoRep, rowLenQ.deq, p.ii,
+    {(ri: UInt, rl: UInt) => IndIndPair(ri, rl)}
+  )
+
+  val rowIndLenRep = FPGAQueue(StreamRepeatElem(p.ii, rowIndLenNoRep, rowLenToRepQ.deq), 2)
+
+  // synchronize streams to form a v-i-i-l structure (Aij, i, j, rowlen)
   // this constitutes the x load requests
-  val nzAndColInd = StreamJoin(readNZData.io.out, readColInd.io.out, p.vi,
-    {(a: UInt, b: UInt) => ValIndPair(a, b)}) // (Aij, j)
-  val loadReqs = StreamJoin(nzAndColInd, rowInds, p.vii,
-    {(vi: ValIndPair, j: UInt) => ValIndInd(vi.value, j, vi.ind)}
+
+  val nzAndColInd = FPGAQueue(StreamJoin(readNZData.io.out, readColInd.io.out, p.vi,
+    {(a: UInt, b: UInt) => ValIndPair(a, b)}))
+
+  val loadReqs = StreamJoin(nzAndColInd, rowIndLenRep, p.viil,
+    {(aj: ValIndPair, il: IndIndPair) =>
+      ValIndIndLen(aj.value, il.indA, aj.ind, il.indB)
+    }
   )
 
   // instantiate input vector loader -- TODO parametrize with function from p
@@ -111,7 +121,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   ).io
   memsys.connectChanReqRsp("inpvec", inpVecLoader.mainMem.memRdReq,
     inpVecLoader.mainMem.memRdRsp)
-  // TODO inpVecLoader may need to signal finish in init mode
+
   inpVecLoader.start := io.start
   inpVecLoader.mode := io.mode
   inpVecLoader.contextBase := io.csr.inpVec
@@ -123,7 +133,9 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   val bytesVal = UInt(p.valWidth / 8)
   val bytesInd = UInt(p.indWidth / 8)
 
-  // TODO these byte widths won't work if we are using non-byte-sized vals/inds
+  // these byte widths won't work if we are using non-byte-sized vals/inds
+  if(p.valWidth % 8 != 0 || p.indWidth % 8 != 0)
+    throw new Exception("valWidth and indWidth must be byte-sized")
 
   readRowPtr.io.start := startRegular
   readRowPtr.io.baseAddr := io.csr.rowPtr
@@ -136,7 +148,6 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   readNZData.io.start := startRegular
   readNZData.io.baseAddr := io.csr.nzData
   readNZData.io.byteCount := bytesVal * io.csr.nz
-
 
   io.finished := Bool(true)
 

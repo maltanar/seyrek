@@ -12,10 +12,10 @@ class InpVecLoaderIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val contextReqCnt = UInt(INPUT, 10)
   // pointer to start of x
   val contextBase = UInt(INPUT, width = p.mrp.addrWidth)
-  // x load requests -- (v, i, j)
-  val loadReq = Decoupled(p.vii).flip
-  // x load responses -- (v, x[j], i)
-  val loadRsp = Decoupled(p.wu)
+  // x load requests -- (v, i, j, rl)
+  val loadReq = Decoupled(p.viil).flip
+  // x load responses -- (v, x[j], i, rl)
+  val loadRsp = Decoupled(p.wul)
   // main memory access port
   val mainMem = new GenericMemoryMasterPort(p.mrp)
   // stat ports
