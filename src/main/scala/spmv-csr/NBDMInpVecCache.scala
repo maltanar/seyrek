@@ -82,15 +82,19 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   tagRead.req.writeData := UInt(0)
 
   // tag init logic
+  val startInit = (io.mode === SeyrekModes.START_INIT & io.start)
+  val regInitActive = Reg(next = startInit)
   val regTagInitAddr = Reg(init = UInt(0, 1+numIndBits))
 
-  io.finished := regTagInitAddr === UInt(numLines)
+  io.finished := startInit & (regTagInitAddr === UInt(numLines))
 
-  when(io.mode === SeyrekModes.START_INIT & io.start & !io.finished) {
-    regTagInitAddr := regTagInitAddr + UInt(1)
-    tagRead.req.writeEn := Bool(true)
-  } .elsewhen(!io.start) {
-    regTagInitAddr := UInt(0)
+  when(regInitActive) {
+    when(!startInit) { regTagInitAddr := UInt(0) }
+    .elsewhen(regTagInitAddr < UInt(numLines)) {
+      regTagInitAddr := regTagInitAddr + UInt(1)
+      tagRead.req.addr := regTagInitAddr
+      tagRead.req.writeEn := Bool(true)
+    }
   }
 
   // cacheline data
