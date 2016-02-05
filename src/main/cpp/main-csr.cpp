@@ -57,6 +57,10 @@ int main(int argc, char *argv[])
 
   try {
     while(1) {
+      // make sure accel is reset prior to use -- important!
+      platf->writeReg(0, 1);
+      platf->writeReg(0, 0);
+      
       string matrixName;
       cout << "Enter matrix name or eye/dense/q: " << endl;
       cin >> matrixName;
