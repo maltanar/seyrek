@@ -77,16 +77,20 @@ class ShufflingInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoade
   tagRead.req.writeEn := Bool(false)
   tagRead.req.writeData := UInt(0)
 
-  //  initialize tag and valid bits when in init mode
+  // tag init logic
+  val startInit = (io.mode === SeyrekModes.START_INIT & io.start)
+  val regInitActive = Reg(next = startInit)
   val regTagInitAddr = Reg(init = UInt(0, 1+numIndBits))
 
-  io.finished := regTagInitAddr === UInt(numLines)
+  io.finished := startInit & (regTagInitAddr === UInt(numLines))
 
-  when(io.mode === SeyrekModes.START_INIT & io.start & !io.finished) {
-    regTagInitAddr := regTagInitAddr + UInt(1)
-    tagRead.req.writeEn := Bool(true)
-  } .elsewhen(!io.start) {
-    regTagInitAddr := UInt(0)
+  when(regInitActive) {
+    when(!startInit) { regTagInitAddr := UInt(0) }
+    .elsewhen(regTagInitAddr < UInt(numLines)) {
+      regTagInitAddr := regTagInitAddr + UInt(1)
+      tagRead.req.addr := regTagInitAddr
+      tagRead.req.writeEn := Bool(true)
+    }
   }
 
   // cacheline data
@@ -121,8 +125,8 @@ class ShufflingInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoade
   // ==========================================================================
   // cloakroom -- don't carry around the entire request
 
-  // turn the external (Aij, i, j) into a cache request
-  def viiToCacheReq(rq: ValIndInd): CacheReq = {
+  // turn the external (Aij, i, j, rl) into a cache request
+  def viilToCacheReq(rq: ValIndIndLen): CacheReq = {
     val cr = new CacheReq()
     cr.tag := rq.j(p.indWidth-1, numOffsBits + numIndBits)
     cr.lineNum := rq.j(numOffsBits + numIndBits - 1, numOffsBits)
@@ -130,17 +134,18 @@ class ShufflingInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoade
     cr
   }
 
-  def makeWU(origRq: ValIndInd, rsp: CacheTagRsp): WorkUnit = {
-    val wu = new WorkUnit(p.valWidth, p.indWidth)
+  def makeWU(origRq: ValIndIndLen, rsp: CacheTagRsp): WorkUnit = {
+    val wu = new WorkUnitAndLen(p.valWidth, p.indWidth)
     wu.matrixVal := origRq.v
     wu.vectorVal := rsp.data
     wu.rowInd := origRq.i
+    wu.rowLen := origRq.rl
     wu
   }
 
-  val cloakroom = Module(new CloakroomBRAM(
-    num = numCacheTxns, genA = p.vii, genC = cacheTagRsp,
-    undress = viiToCacheReq, dress = makeWU
+  val cloakroom = Module(new CloakroomLUTRAM(
+    num = numCacheTxns, genA = io.loadReq.bits, genC = cacheTagRsp,
+    undress = viilToCacheReq, dress = makeWU
   )).io
 
   io.loadReq <> cloakroom.extIn

@@ -4,9 +4,8 @@ import Chisel._
 import TidbitsPlatformWrapper._
 import TidbitsStreams._
 
-// TODO support both CSR and CSC from same template
 
-class SpMVProcElemIF(pSeyrek: SeyrekParams) extends Bundle {
+class SpMVCSRIF(pSeyrek: SeyrekParams) extends Bundle {
   val start = Bool(INPUT)
   val mode = UInt(INPUT, width = 10)
   val finished = Bool(OUTPUT)
@@ -17,11 +16,11 @@ class SpMVProcElemIF(pSeyrek: SeyrekParams) extends Bundle {
   val perfCtrVal = UInt(OUTPUT, width = 32)
 }
 
-class SpMVAccel(p: PlatformWrapperParams, pSeyrek: SeyrekParams)
+class SpMVAccelCSR(p: PlatformWrapperParams, pSeyrek: SeyrekParams)
 extends GenericAccelerator(p) {
   val numMemPorts = pSeyrek.numPEs * pSeyrek.portsPerPE
   val io = new GenericAcceleratorIF(numMemPorts, p) {
-    val pe = Vec.fill(pSeyrek.numPEs) {new SpMVProcElemIF(pSeyrek)}
+    val pe = Vec.fill(pSeyrek.numPEs) {new SpMVCSRIF(pSeyrek)}
   }
   setName(pSeyrek.accelName)
   io.signature := makeDefaultSignature()
@@ -47,7 +46,6 @@ extends GenericAccelerator(p) {
       backend.io.mainMem(mp) <> io.memPort(i * pSeyrek.portsPerPE + mp)
 
     ioPE.csr <> frontend.io.csr
-    backend.io.rowLen <> frontend.io.rowLen
     backend.io.workUnits <> frontend.io.workUnits
     frontend.io.results <> backend.io.results
 
