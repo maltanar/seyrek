@@ -95,8 +95,8 @@ int main(int argc, char *argv[])
       unsigned int numPE;
       cin >> numPE;
 
-      //acc = new HardwareSpMV(platform, 0, attachname.c_str());
-      acc = new ParHWSpMV(numPE, platf, attachname.c_str());
+      //acc = new HardwareSpMV(platform, 0);
+      acc = new ParHWSpMV(numPE, platf);
 
       cout << "Setting inputs..." << endl;
 
