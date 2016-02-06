@@ -13,9 +13,9 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   if(p.valWidth > p.mrp.dataWidth || p.mrp.dataWidth % p.valWidth != 0)
     throw new Exception("Unsupported valWidth:dataWidth ratio")
 
-  val numReadTxns = 8
-  val numCacheTxns = 8
-  val numLines = 4096
+  val numReadTxns = 16
+  val numCacheTxns = 16
+  val numLines = 8192
 
   if(!isPow2(numLines))
     throw new Exception("Cache lines must be power of two")

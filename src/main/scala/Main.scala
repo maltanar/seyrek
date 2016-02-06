@@ -19,8 +19,27 @@ object ChannelConfigs {
   )
 }
 
-class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
-  val accelName = "CSRTest"
+class CSRTestAParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val accelName = "CSRTestA"
+  val numPEs = 8
+  val portsPerPE = 4
+  val chanConfig = ChannelConfigs.csrTest
+  val indWidth = 32
+  val valWidth = 64
+  val mrp = p.toMemReqParams()
+
+  val makeSemiringAdd = { () =>
+    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
+  }
+
+  val makeSemiringMul = { () =>
+    new SystolicSInt64Mul_5Stage()
+  }
+  val issueWindow = 16
+}
+
+class CSRTestBParams(p: PlatformWrapperParams) extends SeyrekParams {
+  val accelName = "CSRTestB"
   val numPEs = 4
   val portsPerPE = 4
   val chanConfig = ChannelConfigs.csrTest
@@ -35,7 +54,7 @@ class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
   val makeSemiringMul = { () =>
     new SystolicSInt64Mul_5Stage()
   }
-  val issueWindow = 8
+  val issueWindow = 16
 }
 
 object SeyrekMainObj {
@@ -45,7 +64,8 @@ object SeyrekMainObj {
   type PlatformMap = Map[String, PlatformInstFxn]
 
   val accelMap: AccelMap  = Map(
-    "CSRTest" -> {p => new SpMVAccelCSR(p, new CSRTestParams(p))}
+    "CSRTestA" -> {p => new SpMVAccelCSR(p, new CSRTestAParams(p))},
+    "CSRTestB" -> {p => new SpMVAccelCSR(p, new CSRTestBParams(p))}
   )
 
   val platformMap: PlatformMap = Map(
