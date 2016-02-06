@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 void * readMatrixData(std::string name, std::string component) {
-  std::string matricesBase = "/root/seyrek/matrices";
+  std::string matricesBase = "/root/seyrek-csr/matrices";
   std::string fileName = matricesBase + "/" + name + "/" + name + "-" + component + ".bin";
   FILE *f = fopen(fileName.c_str(), "rb");
   if(!f) throw (std::string("Could not open file: ") + fileName).c_str();
