@@ -15,7 +15,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
   val numReadTxns = 16
   val numCacheTxns = 16
-  val numLines = 8192
+  val numLines = 4096
 
   if(!isPow2(numLines))
     throw new Exception("Cache lines must be power of two")
