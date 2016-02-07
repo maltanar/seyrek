@@ -70,6 +70,7 @@ object SeyrekMainObj {
 
   val platformMap: PlatformMap = Map(
     "ZedBoard" -> {f => new ZedBoardWrapper(f)},
+    "ZedBoardLinux" -> {f => new ZedBoardLinuxWrapper(f)},
     "WX690T" -> {f => new WolverinePlatformWrapper(f)},
     "Tester" -> {f => new TesterWrapper(f)}
   )
@@ -85,17 +86,55 @@ object SeyrekMainObj {
   def makeVerilog(args: Array[String]) = {
     val accelName = args(0)
     val platformName = args(1)
-    val accInst = accelMap(accelName)
+    val accInst = accelConfigMap(accelName)
     val platformInst = platformMap(platformName)
     val chiselArgs = Array("--backend", "v")
 
     chiselMain(chiselArgs, () => Module(platformInst(accInst)))
   }
 
+  def copySeyrekFiles(platformName: String, destDir: String) = {
+    // copy Seyrek support files
+    val seyrekDrvRoot = "src/main/cpp/"
+    val seyrekFiles = Array("commonsemirings.hpp", "HWCSRSpMV.hpp",
+      "semiring.hpp", "wrapperregdriver.h", "CSR.hpp", "main-csr.cpp",
+      "CSRSpMV.hpp", "platform.h", "SWCSRSpMV.hpp",
+      "seyrekconsts.hpp", "ParallelHWCSRSpMV.hpp")
+    for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, destDir + f) }
+    val seyrekSpMap = Map(
+      "ZedBoardLinux" -> "seyrek-zed-linux.cpp",
+      "Tester" -> "seyrek-tester.cpp"
+    )
+    val seyrekSpFile = seyrekSpMap(platformName)
+    fileCopy(seyrekDrvRoot+seyrekSpFile, destDir + seyrekSpFile)
+  }
+
+  def makeSWPackage(args: Array[String]) = {
+    val accelName = args(0)
+    val platformName = args(1)
+    val accInst = accelConfigMap(accelName)
+    val platformInst = platformMap(platformName)
+    val folderName = platformName + "-" + accelName + "/"
+    // create target directory if missing
+    import java.io.File
+    val theDir = new File(folderName)
+    if (!theDir.exists()) theDir.mkdir()
+
+    // generate the platform reg wrapper driver -- not useful for now
+    platformInst(accInst).generateRegDriver(folderName)
+    // generate the performance counter mappings - platform doesn't matter here
+    accInst(TesterWrapperParams).generatePerfCtrMapCode(folderName)
+    // copy driver files for platform and Seyrek files
+    val drvFiles: Array[String] = platformInst(accInst).platformDriverFiles
+    val regDrvRoot = "src/main/scala/fpga-tidbits/platform-wrapper/regdriver/"
+    for(f <- drvFiles) {fileCopy(regDrvRoot+f, folderName+f)}
+    copySeyrekFiles(platformName, folderName)
+  }
+
   def makeEmulator(args: Array[String]) = {
     val accelName = args(0)
 
-    val accInst = accelMap(accelName)
+    val accInst = accelConfigMap(accelName)
     val platformInst = platformMap("Tester")
     val chiselArgs = Array("--backend","c","--targetDir", "emulator")
 
@@ -108,30 +147,15 @@ object SeyrekMainObj {
     val files = Array("wrapperregdriver.h", "platform-tester.cpp",
       "platform.h", "testerdriver.hpp")
     for(f <- files) { fileCopy(regDrvRoot + f, "emulator/" + f) }
-    // copy Seyrek support files
-    val seyrekDrvRoot = "src/main/cpp/"
-    val seyrekFiles = Array("commonsemirings.hpp", "HWCSRSpMV.hpp",
-      "semiring.hpp", "wrapperregdriver.h", "CSR.hpp", "main-csr.cpp",
-      "CSRSpMV.hpp", "platform.h", "SWCSRSpMV.hpp", "seyrek-tester.cpp",
-      "seyrekconsts.hpp", "ParallelHWCSRSpMV.hpp")
-    for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, "emulator/" + f) }
-  }
 
-  def makeDriver(args: Array[String]) = {
-    val accelName = args(0)
-    val platformName = args(1)
-    val accInst = accelMap(accelName)
-    val platformInst = platformMap(platformName)
-
-    platformInst(accInst).generateRegDriver(".")
-    accInst(TesterWrapperParams).generatePerfCtrMapCode(".")
+    copySeyrekFiles("Tester", "emulator/")
   }
 
   def showHelp() = {
     println("Usage: run <op> <accel> <platform>")
     println("where:")
-    println("<op> = verilog driver emulator")
-    println("<accel> = " + accelMap.keys.reduce({_ + " " +_}))
+    println("<op> = verilog software emulator")
+    println("<accel> = " + accelConfigMap.keys.reduce({_ + " " +_}))
     println("<platform> = " + platformMap.keys.reduce({_ + " " +_}))
   }
 
@@ -146,8 +170,8 @@ object SeyrekMainObj {
 
     if (op == "verilog" || op == "v") {
       makeVerilog(rst)
-    } else if (op == "driver" || op == "d") {
-      makeDriver(rst)
+    } else if (op == "software" || op == "s") {
+      makeSWPackage(rst)
     } else if (op == "emulator" || op == "e") {
       makeEmulator(rst)
     } else {

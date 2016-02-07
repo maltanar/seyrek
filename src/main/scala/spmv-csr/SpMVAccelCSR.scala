@@ -58,17 +58,12 @@ extends GenericAccelerator(p) {
     }
 
     val yes = ioPE.start & !ioPE.finished
-    // StreamMonitors for general progress monitoring
-    // also output as printfs on the Chisel C++ emulator
-    // TODO control the printfs
-    val monWU = StreamMonitor(frontend.io.workUnits, yes, s"$i workUnits")
 
     // performance counter stuff
     val regPerfCtrSel = Reg(next = ioPE.perfCtrSel)
 
     val perfCtrMap = Map[String, Data](
       "cycleCount" -> regCycleCount,
-      "workUnits" -> monWU,
       "perfBE" -> backend.io.perfBE
     )
 
