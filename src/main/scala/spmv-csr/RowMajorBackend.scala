@@ -19,8 +19,13 @@ class RowMajorBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val mainMem = Vec.fill(p.portsPerPE) {new GenericMemoryMasterPort(p.mrp)}
   // stats
   val perfBE = new Bundle {
+    val nz = new StreamMonitorOutIF()
+    val indptr = new StreamMonitorOutIF()
+    val inds = new StreamMonitorOutIF()
+    val loadReqs = new StreamMonitorOutIF()
     val cacheBW = new StreamMonitorOutIF()
-    val cacheNewReq = new StreamMonitorOutIF()
+    val workUnits = new StreamMonitorOutIF()
+    val resWr = new StreamMonitorOutIF()
   }
 }
 
@@ -166,9 +171,17 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   } .elsewhen(io.mode === SeyrekModes.START_INIT) {
     io.finished := inpVecLoader.finished
   }
-  val doMon = io.start & !io.finished
+
+  // ==========================================================================
+  // performance counters
+  val doMon = startRegular & !io.finished
   io.perfBE.cacheBW <> StreamMonitor(inpVecLoader.mainMem.memRdRsp, doMon, "cacheBW")
-  io.perfBE.cacheNewReq <> inpVecLoader.cacheNewReq
+  io.perfBE.nz <> StreamMonitor(readNZData.io.out, doMon, "nz")
+  io.perfBE.indptr <> StreamMonitor(readRowPtr.io.out, doMon, "inpvec")
+  io.perfBE.inds <> StreamMonitor(readColInd.io.out, doMon, "colind")
+  io.perfBE.loadReqs <> StreamMonitor(loadReqs, doMon, "loadReqs")
+  io.perfBE.workUnits <> StreamMonitor(io.workUnits, doMon, "workUnits")
+  io.perfBE.resWr <> StreamMonitor(resWriter.results, doMon, "resWr")
 }
 
 

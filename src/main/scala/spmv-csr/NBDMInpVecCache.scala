@@ -219,10 +219,6 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
   val tagRespDest = Seq(missQ.enq, respQ.enq)
   tagRespQ.deq <> DecoupledOutputDemux(tagRespQ.deq.bits.isHit, tagRespDest)
 
-  // stats / performance counters
-  val doMon = io.start
-  io.cacheNewReq := StreamMonitor(newReqQ.deq, doMon, "cacheNewReq")
-
   // =========================================================================
   // debugging
 

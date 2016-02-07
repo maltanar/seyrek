@@ -18,8 +18,6 @@ class InpVecLoaderIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val loadRsp = Decoupled(p.wul)
   // main memory access port
   val mainMem = new GenericMemoryMasterPort(p.mrp)
-  // stat ports
-  val cacheNewReq = new StreamMonitorOutIF()
 }
 
 // base abstract class for input vec. loaders

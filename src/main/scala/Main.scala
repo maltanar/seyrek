@@ -73,14 +73,20 @@ object SeyrekMainObj {
     chiselMain(chiselArgs, () => Module(platformInst(accInst)))
   }
 
-  def copySeyrekFiles(destDir: String) = {
+  def copySeyrekFiles(platformName: String, destDir: String) = {
     // copy Seyrek support files
     val seyrekDrvRoot = "src/main/cpp/"
     val seyrekFiles = Array("commonsemirings.hpp", "HWCSRSpMV.hpp",
       "semiring.hpp", "wrapperregdriver.h", "CSR.hpp", "main-csr.cpp",
-      "CSRSpMV.hpp", "platform.h", "SWCSRSpMV.hpp", "seyrek-tester.cpp",
+      "CSRSpMV.hpp", "platform.h", "SWCSRSpMV.hpp",
       "seyrekconsts.hpp", "ParallelHWCSRSpMV.hpp")
     for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, destDir + f) }
+    val seyrekSpMap = Map(
+      "ZedBoardLinux" -> "seyrek-zed-linux.cpp",
+      "Tester" -> "seyrek-tester.cpp"
+    )
+    val seyrekSpFile = seyrekSpMap(platformName)
+    fileCopy(seyrekDrvRoot+seyrekSpFile, destDir + seyrekSpFile)
   }
 
   def makeSWPackage(args: Array[String]) = {
@@ -102,7 +108,7 @@ object SeyrekMainObj {
     val drvFiles: Array[String] = platformInst(accInst).platformDriverFiles
     val regDrvRoot = "src/main/scala/fpga-tidbits/platform-wrapper/regdriver/"
     for(f <- drvFiles) {fileCopy(regDrvRoot+f, folderName+f)}
-    copySeyrekFiles(folderName)
+    copySeyrekFiles(platformName, folderName)
   }
 
   def makeEmulator(args: Array[String]) = {
@@ -122,7 +128,7 @@ object SeyrekMainObj {
       "platform.h", "testerdriver.hpp")
     for(f <- files) { fileCopy(regDrvRoot + f, "emulator/" + f) }
 
-    copySeyrekFiles("emulator/")
+    copySeyrekFiles("Tester", "emulator/")
   }
 
   def showHelp() = {
