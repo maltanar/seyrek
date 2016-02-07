@@ -22,8 +22,7 @@ using namespace std;
 template <class SpMVInd, class SpMVVal>
 class HWCSRSpMV : public virtual CSRSpMV<SpMVInd, SpMVVal>, public AddMulSemiring<SpMVInd, SpMVVal> {
 public:
-  HWCSRSpMV(WrapperRegDriver * driver, unsigned int peNum = 0, const char * attachName = 0) {
-    m_attachName = attachName;
+  HWCSRSpMV(WrapperRegDriver * driver, unsigned int peNum = 0) {
     m_platform = driver;
     m_acc_indPtrs = 0;
     m_acc_inds = 0;
@@ -40,11 +39,9 @@ public:
     for(map<string,unsigned int>::iterator it = m_perfCtrIndMap.begin(); it != m_perfCtrIndMap.end(); ++it) {
       m_perfCtrKeys.push_back(it->first);
     }
-    if(attachName != 0)
-      m_platform->attach(attachName);
   }
 
-  virtual ~HWCSRSpMV() {if(m_attachName !=0) m_platform->detach();}
+  virtual ~HWCSRSpMV() {}
 
   virtual void setA(CSR<SpMVInd, SpMVVal> * A) {
     // free the old accel buffers first, if alloc'd
@@ -167,7 +164,6 @@ protected:
   using CSRSpMV<SpMVInd, SpMVVal>::m_x;
 
   WrapperRegDriver * m_platform;
-  const char * m_attachName;
   unsigned int m_peNum;
 
 

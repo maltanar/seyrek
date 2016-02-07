@@ -25,19 +25,15 @@ using namespace std;
 template <class SpMVInd, class SpMVVal>
 class ParallelHWCSRSpMV : public virtual CSRSpMV<SpMVInd, SpMVVal>, public AddMulSemiring<SpMVInd, SpMVVal> {
 public:
-  ParallelHWCSRSpMV(unsigned int numPEs, WrapperRegDriver * driver,
-                 const char * attachName) {
-    m_attachName = attachName;
+  ParallelHWCSRSpMV(unsigned int numPEs, WrapperRegDriver * driver) {
     m_platform = driver;
     m_numPEs = numPEs;
     for(unsigned int pe = 0; pe < m_numPEs; pe++) {
         m_pe[pe] = new HWCSRSpMV<SpMVInd, SpMVVal>(driver, pe);
     }
-    m_platform->attach(attachName);
   }
 
   virtual ~ParallelHWCSRSpMV() {
-    m_platform->detach();
     for(unsigned int pe = 0; pe < m_numPEs; pe++) {
         delete m_pe[pe];
     }
@@ -113,7 +109,6 @@ public:
 
 protected:
   unsigned int m_numPEs;
-  const char * m_attachName;
   HWCSRSpMV<SpMVInd, SpMVVal> * m_pe[MAX_HWSPMV_PE];
   WrapperRegDriver * m_platform;
   std::vector<CSR<SpMVInd, SpMVVal> * > m_partitions;
