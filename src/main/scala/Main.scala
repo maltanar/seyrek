@@ -63,7 +63,7 @@ object SeyrekMainObj {
   type PlatformInstFxn = AccelInstFxn => PlatformWrapper
   type PlatformMap = Map[String, PlatformInstFxn]
 
-  val accelMap: AccelMap  = Map(
+  val accelConfigMap: AccelMap  = Map(
     "CSRTestA" -> {p => new SpMVAccelCSR(p, new CSRTestAParams(p))},
     "CSRTestB" -> {p => new SpMVAccelCSR(p, new CSRTestBParams(p))}
   )
@@ -103,7 +103,8 @@ object SeyrekMainObj {
     for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, destDir + f) }
     val seyrekSpMap = Map(
       "ZedBoardLinux" -> "seyrek-zed-linux.cpp",
-      "Tester" -> "seyrek-tester.cpp"
+      "Tester" -> "seyrek-tester.cpp",
+      "WX690T" -> "seyrek-tester.cpp"
     )
     val seyrekSpFile = seyrekSpMap(platformName)
     fileCopy(seyrekDrvRoot+seyrekSpFile, destDir + seyrekSpFile)
