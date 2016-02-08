@@ -177,7 +177,7 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
   val doMon = startRegular & !io.finished
   io.perfBE.cacheBW <> StreamMonitor(inpVecLoader.mainMem.memRdRsp, doMon, "cacheBW")
   io.perfBE.nz <> StreamMonitor(readNZData.io.out, doMon, "nz")
-  io.perfBE.indptr <> StreamMonitor(readRowPtr.io.out, doMon, "inpvec")
+  io.perfBE.indptr <> StreamMonitor(readRowPtr.io.out, doMon, "indptr")
   io.perfBE.inds <> StreamMonitor(readColInd.io.out, doMon, "colind")
   io.perfBE.loadReqs <> StreamMonitor(loadReqs, doMon, "loadReqs")
   io.perfBE.workUnits <> StreamMonitor(io.workUnits, doMon, "workUnits")
@@ -228,7 +228,8 @@ class ResultWriterSimple(p: SeyrekParams) extends Module {
     regCompletedRows := regCompletedRows + UInt(1)
   }
 
-  io.finished := Mux(startRegular, regCompletedRows === io.csr.rows, Bool(true))
+  val regRows = Reg(next =  io.csr.rows)
+  io.finished := Mux(startRegular, regCompletedRows === regRows, Bool(true))
 
   // printfs for debug
   /*
