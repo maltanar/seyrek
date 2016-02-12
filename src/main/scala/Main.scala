@@ -28,13 +28,9 @@ class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
   val valWidth = 64
   val mrp = p.toMemReqParams()
 
-  val makeSemiringAdd = { () =>
-    new StagedUIntOp(valWidth, 1, {(a: UInt, b: UInt) => a+b})
-  }
-
-  val makeSemiringMul = { () =>
-    new SystolicSInt64Mul_5Stage()
-  }
+  val makeSemiringAdd = { () => new DPAdder(3) }
+  val makeSemiringMul = { () => new DPMultiplier(8) }
+  
   val issueWindow = 8
 }
 
