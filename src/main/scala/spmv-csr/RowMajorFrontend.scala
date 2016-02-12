@@ -97,7 +97,7 @@ class RowMajorReducer(p: SeyrekParams) extends Module {
   val add = Module(new ContextfulSemiringOp(p, p.makeSemiringAdd)).io
   // queue that keeps the operands with translated IDs
   val workQ = Module(new FPGAQueue(p.vi, 2)).io
-  val addQ = Module(new FPGAQueue(p.wu, 2)).io  // adder inputs
+  val addQ = Module(new FPGAQueue(p.wu, 8)).io  // adder inputs
   val resQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results
   val resOpQ = Module(new FPGAQueue(p.vi, 2)).io  // adder results back to ops
   val retQ = Module(new FPGAQueue(p.vi, 2)).io  // rows ready to retire
@@ -313,7 +313,7 @@ class RowMajorReducerUpsizerIO(p: SeyrekParams) extends Bundle {
   val inB = Decoupled(p.vi).flip
   val out = Decoupled(p.wu)
   val aCount = UInt(OUTPUT, 2)
-  val bCount = UInt(OUTPUT, 4)
+  val bCount = UInt(OUTPUT, 2)
 
   override def cloneType: this.type = new RowMajorReducerUpsizerIO(p).asInstanceOf[this.type]
 }
@@ -322,7 +322,7 @@ class RowMajorReducerUpsizer(p: SeyrekParams) extends Module {
   val io = new RowMajorReducerUpsizerIO(p)
 
   val qiA = FPGAQueue(io.inA, 2)
-  val qiB = FPGAQueue(io.inB, 8)
+  val qiB = FPGAQueue(io.inB, 2)
 
   val qA = Module(new FPGAQueue(p.vi, 2)).io
   val qB = Module(new FPGAQueue(p.vi, 2)).io
