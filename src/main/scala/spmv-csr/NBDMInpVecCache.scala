@@ -264,6 +264,12 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
       // access to main memory for issuing load requests
       val mainMem = new GenericMemoryMasterPort(p.mrp)
     }
+    class PendingMiss extends CacheReq {
+      val missID = UInt(width = log2Up(txns))
+
+      override def cloneType: this.type = new PendingMiss().asInstanceOf[this.type]
+    }
+    val pendingMiss = new PendingMiss()
 
     // queue for storing conflicting cache misses
     val conflictQ = Module(new FPGAQueue(cacheReq, 16)).io
@@ -273,15 +279,12 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val missHead = FPGAQueue(mixMiss.out, 2)
 
     // miss queues, where the misses wait for the load to complete
-    /* IMPROVE replace these with a BRAM */
-    val missQ = Vec.fill(txns) {
-      Module(new FPGAQueue(cacheReq, 16)).io
-    }
-    val missQEnqSel = UInt(width = log2Up(txns))
-    val missQEnq = DecoupledOutputDemux(missQEnqSel, missQ.map(x => x.enq))
-    val missQDeqSel = UInt(width = log2Up(txns))
-    val missQDeq = DecoupledInputMux(missQDeqSel, missQ.map(x => x.deq))
-    val missQCounts = Vec(missQ.map(x => x.count))
+    val pendingMissQ = Module(new MultiChanQueueBRAM(
+      gen = pendingMiss, chans = txns, elemsPerChan = 32,
+      getChan = {p: PendingMiss => p.missID}
+    )).io
+    val pendingMissEntryQ = Module(new FPGAQueue(pendingMiss, 2)).io
+    pendingMissEntryQ.deq <> pendingMissQ.in
 
     // registers for keeping the status of each miss load
     val loadValid = Reg(init = Bits(0, txns))
@@ -334,8 +337,8 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // conflicts cannot enter, even if there is a free slot --
     // they move into their own queue, called conflictQ, to wait
-    val enterAsNew = !isExisting & !isConflict & hasFreeSlot & missQEnq.ready & mreq.ready
-    val enterAsExisting = isExisting & missQEnq.ready
+    val enterAsNew = !isExisting & !isConflict & hasFreeSlot & pendingMissEntryQ.enq.ready & mreq.ready
+    val enterAsExisting = isExisting & pendingMissEntryQ.enq.ready
     val enterAsConflict = isConflict & conflictQ.enq.ready
 
     missHead.ready := enterAsConflict | enterAsNew | enterAsExisting
@@ -344,9 +347,9 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     conflictQ.enq.bits := missHead.bits
 
     // move accepted miss into appropriate miss queue
-    missQEnq.valid := missHead.valid & (enterAsNew | enterAsExisting)
-    missQEnq.bits := missHead.bits
-    missQEnqSel := Mux(isExisting, hitPos, freePos)
+    pendingMissEntryQ.enq.valid := missHead.valid & (enterAsNew | enterAsExisting)
+    pendingMissEntryQ.enq.bits := missHead.bits
+    pendingMissEntryQ.enq.bits.missID := Mux(isExisting, hitPos, freePos)
 
     // sanity check: miss must enter as only one kind
     when(missHead.valid & missHead.ready) {
@@ -433,17 +436,17 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val complHeadID = completedQ.deq.bits
 
     clrPos := complHeadID
-    missQDeqSel := complHeadID
+    pendingMissQ.outSel := complHeadID
 
-    io.resolved.valid := missQDeq.valid & completedQ.deq.valid
-    io.resolved.bits := missQDeq.bits
-    missQDeq.ready := io.resolved.ready & completedQ.deq.valid
+    io.resolved.valid := pendingMissQ.out.valid & completedQ.deq.valid
+    io.resolved.bits := pendingMissQ.out.bits
+    pendingMissQ.out.ready := io.resolved.ready & completedQ.deq.valid
 
     completedQ.deq.ready := Bool(false)
 
     // use a small counter to ensure that we have seen all the misses
     val regEnsureCompl = Reg(init = UInt(0, 3))
-    val likeCompl = completedQ.deq.valid & !missQDeq.valid
+    val likeCompl = completedQ.deq.valid & !pendingMissQ.out.valid
     val ensureWaitCycles = 4
 
     when(likeCompl) {
