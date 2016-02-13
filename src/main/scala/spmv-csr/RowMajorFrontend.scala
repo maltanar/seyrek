@@ -18,6 +18,11 @@ class DummyRowMajorFrontend(p: SeyrekParams) extends Module {
 
   val startRegular = io.start & io.mode === SeyrekModes.START_REGULAR
 
+  val regMakeUseOfWUs = Reg(next = io.workUnits.bits)
+  val regUseWUVals = Reg(next = regMakeUseOfWUs.matrixVal + regMakeUseOfWUs.vectorVal )
+  val regUseWUInds = Reg(next = regMakeUseOfWUs.rowInd + regMakeUseOfWUs.rowLen )
+  val regSomething = Reg(next = regUseWUInds + regUseWUVals)
+
   io.workUnits.ready := Bool(true)
   val regWUCount = Reg(init = UInt(0, 32))
 
@@ -32,7 +37,7 @@ class DummyRowMajorFrontend(p: SeyrekParams) extends Module {
   val seq = NaturalNumbers(p.indWidth, startRegular & wuFinished, io.csr.rows)
 
   io.results.valid := seq.valid
-  io.results.bits.value := seq.bits
+  io.results.bits.value := regSomething
   io.results.bits.ind := seq.bits
   seq.ready := io.results.ready
 
