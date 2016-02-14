@@ -271,12 +271,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     }
     val pendingMiss = new PendingMiss()
 
-    // queue for storing conflicting cache misses
-    val conflictQ = Module(new FPGAQueue(cacheReq, 16)).io
-    val mixMiss = Module(new Arbiter(cacheReq, 2)).io
-    io.misses <> mixMiss.in(0)
-    conflictQ.deq <> mixMiss.in(1)
-    val missHead = FPGAQueue(mixMiss.out, 2)
+    val missHead = io.misses
 
     // miss queues, where the misses wait for the load to complete
     val pendingMissQ = Module(new MultiChanQueueBRAM(
@@ -307,6 +302,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // list of completed loads
     val completedQ = Module(new FPGAQueue(UInt(width = log2Up(txns)), 4)).io
+    val complHeadID = completedQ.deq.bits
 
     // read order cache
     val roc = Module(new ReadOrderCache(new ReadOrderCacheParams(
@@ -326,25 +322,17 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // ========================================================================
 
-    // check incoming misses for line conflicts and tag match
+    // check incoming misses for pending line (already loading)
     val lineMatch = Vec((0 until txns).map(i => loadLine(i) === missHead.bits.lineNum & loadValid(i))).toBits
-    val tagMatch = Vec((0 until txns).map(i => loadTag(i) === missHead.bits.tag & loadValid(i))).toBits
+    val isExisting = lineMatch.orR
+    val hitPos = PriorityEncoder(lineMatch)
 
-    val tagAndLineMatch = lineMatch & tagMatch & loadValid
-    val isConflict = (lineMatch & ~tagMatch & loadValid).orR
-    val isExisting = tagAndLineMatch.orR
-    val hitPos = PriorityEncoder(tagAndLineMatch)
+    val isLineLocked = (completedQ.deq.valid & complHeadID === hitPos)
+    val enterAsNew = !isExisting & hasFreeSlot & pendingMissEntryQ.enq.ready & mreq.ready
+    val enterAsExisting = isExisting & pendingMissEntryQ.enq.ready & !isLineLocked
 
-    // conflicts cannot enter, even if there is a free slot --
-    // they move into their own queue, called conflictQ, to wait
-    val enterAsNew = !isExisting & !isConflict & hasFreeSlot & pendingMissEntryQ.enq.ready & mreq.ready
-    val enterAsExisting = isExisting & pendingMissEntryQ.enq.ready
-    val enterAsConflict = isConflict & conflictQ.enq.ready
 
-    missHead.ready := enterAsConflict | enterAsNew | enterAsExisting
-
-    conflictQ.enq.valid := missHead.valid & isConflict
-    conflictQ.enq.bits := missHead.bits
+    missHead.ready := enterAsNew | enterAsExisting
 
     // move accepted miss into appropriate miss queue
     pendingMissEntryQ.enq.valid := missHead.valid & (enterAsNew | enterAsExisting)
@@ -353,16 +341,14 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // sanity check: miss must enter as only one kind
     when(missHead.valid & missHead.ready) {
-      val entryType = Cat(enterAsNew, enterAsConflict, enterAsExisting)
+      val entryType = Cat(enterAsNew, enterAsExisting)
       when(PopCount(entryType) != UInt(1)) {
         printf("***ERROR! Multiple entry: ")
         printf("enterAsNew = %d, ", enterAsNew)
-        printf("enterAsConflict = %d, ", enterAsConflict)
         printf("enterAsExisting = %d, ", enterAsExisting)
         printf("\n for req: ")
         printf(missHead.bits.printfStr, missHead.bits.printfElems():_*)
         printf("lineMatch: %b \n", lineMatch)
-        printf("tagMatch: %b \n", tagMatch)
         printf("CAM status: \n")
         for(i <- 0 until txns) {
           printf("entry %d: valid = %d line = %d tag = %d \n", UInt(i),
@@ -433,8 +419,6 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
 
     // =======================================================================
     // flush pending requests when load finished
-    val complHeadID = completedQ.deq.bits
-
     clrPos := complHeadID
     pendingMissQ.outSel := complHeadID
 
@@ -445,6 +429,7 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     completedQ.deq.ready := Bool(false)
 
     // use a small counter to ensure that we have seen all the misses
+    // TODO use per-txn regs to count all entering misses instead
     val regEnsureCompl = Reg(init = UInt(0, 3))
     val likeCompl = completedQ.deq.valid & !pendingMissQ.out.valid
     val ensureWaitCycles = 4
@@ -464,13 +449,9 @@ class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) 
     val verboseDebug = true
     if(verboseDebug) {
       when(missHead.ready & missHead.valid & !isExisting) {
-        when(!isConflict) {
-          printf("New miss in handler: ")
-          printf("mid = %d line = %d tag   = %d \n", freePos,
-          missHead.bits.lineNum, missHead.bits.tag)
-        } .otherwise {
-          printf("Conflict miss, redir to conflictQ\n")
-        }
+        printf("New miss in handler: ")
+        printf("mid = %d line = %d tag   = %d \n", freePos,
+        missHead.bits.lineNum, missHead.bits.tag)
       }
 
       when(mrsp.ready & mrsp.valid) {
