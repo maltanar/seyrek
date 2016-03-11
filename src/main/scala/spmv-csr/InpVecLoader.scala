@@ -1,8 +1,8 @@
 package Seyrek
 
 import Chisel._
-import TidbitsDMA._
-import TidbitsStreams._
+import fpgatidbits.dma._
+import fpgatidbits.streams._
 
 // TODO there are various similarities between this and ContextMem for col-major
 // can we come up with an abstraction to unify the designs?

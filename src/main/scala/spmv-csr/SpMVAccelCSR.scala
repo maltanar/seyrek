@@ -1,8 +1,8 @@
 package Seyrek
 
 import Chisel._
-import TidbitsPlatformWrapper._
-import TidbitsStreams._
+import fpgatidbits.PlatformWrapper._
+import fpgatidbits.streams._
 
 
 class SpMVCSRIF(pSeyrek: SeyrekParams) extends Bundle {

@@ -1,9 +1,9 @@
 package Seyrek
 
 import Chisel._
-import TidbitsDMA._
-import TidbitsOCM._
-import TidbitsStreams._
+import fpgatidbits.dma._
+import fpgatidbits.ocm._
+import fpgatidbits.streams._
 
 // combines incoming row results into write bursts
 class ResultWriterCombining(p: SeyrekParams) extends Module {

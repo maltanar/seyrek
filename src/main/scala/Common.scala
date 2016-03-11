@@ -1,10 +1,10 @@
 package Seyrek
 
 import Chisel._
-import TidbitsDMA._
-import TidbitsOCM._
-import TidbitsStreams._
-import TidbitsMath._
+import fpgatidbits.dma._
+import fpgatidbits.ocm._
+import fpgatidbits.streams._
+import fpgatidbits.math._
 
 trait SeyrekParams {
   def accelName: String

@@ -1,9 +1,9 @@
 package Seyrek
 
 import Chisel._
-import TidbitsDMA._
-import TidbitsStreams._
-import TidbitsOCM._
+import fpgatidbits.dma._
+import fpgatidbits.streams._
+import fpgatidbits.ocm._
 
 class ShufflingInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) {
   val inOrder = false

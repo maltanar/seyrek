@@ -1,7 +1,7 @@
 package Seyrek
 
 import Chisel._
-import TidbitsMath._
+import fpgatidbits.math._
 
 // combinatorial variants of UInt add and multiply
 class OpAddCombinatorial(w: Int) extends BinaryMathOp(w) {

@@ -1,9 +1,9 @@
 package Seyrek
 
 import Chisel._
-import TidbitsDMA._
-import TidbitsOCM._
-import TidbitsStreams._
+import fpgatidbits.dma._
+import fpgatidbits.ocm._
+import fpgatidbits.streams._
 
 class RowMajorBackendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csr = new CSRSpMV(p).asInput

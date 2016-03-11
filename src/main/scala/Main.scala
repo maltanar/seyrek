@@ -1,14 +1,11 @@
 package Seyrek
 
 import Chisel._
-import TidbitsTestbenches._
-import TidbitsOCM._
-import TidbitsStreams._
-import TidbitsSimUtils._
-import TidbitsAXI._
-import TidbitsDMA._
-import TidbitsPlatformWrapper._
-import TidbitsMath._
+import fpgatidbits.ocm._
+import fpgatidbits.streams._
+import fpgatidbits.dma._
+import fpgatidbits.PlatformWrapper._
+import fpgatidbits.math._
 
 object ChannelConfigs {
   val csrTest = Map(
