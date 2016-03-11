@@ -58,7 +58,7 @@ class DPAdder(stages: Int) extends BinaryMathOp(64) {
 
   if(enableBlackBox) {
     // generate blackbox for dbl-precision floating pt add
-    val op = Module(new DPBlackBox("WrapperXilinxDPAdd"+stages.toString+"Stage")).io
+    val op = Module(new DPBlackBox("AddDbl"+stages.toString+"Stg")).io
     op.inA.bits := io.in.bits.first
     op.inB.bits := io.in.bits.second
     op.inA.valid := io.in.valid
@@ -85,7 +85,7 @@ class DPMultiplier(stages: Int) extends BinaryMathOp(64) {
 
   if(enableBlackBox) {
     // generate blackbox for dbl-precision floating pt mul
-    val op = Module(new DPBlackBox("WrapperXilinxDPMul"+stages.toString+"Stage")).io
+    val op = Module(new DPBlackBox("MulDbl"+stages.toString+"Stg")).io
     op.inA.bits := io.in.bits.first
     op.inB.bits := io.in.bits.second
     op.inA.valid := io.in.valid
@@ -111,5 +111,18 @@ class DPBlackBox(name: String) extends BlackBox {
     val inB = Decoupled(UInt(width = 64)).flip
     val out = Decoupled(UInt(width = 64))
   }
-  this.addClock(Driver.implicitClock)
+
+  def renameAsAXIStream(strm: DecoupledIO[UInt], nm: String, isMaster: Boolean) = {
+    val pf = if(isMaster) "m_" else "s_"
+    strm.valid.setName(pf + "axis_" + nm + "_tvalid")
+    strm.ready.setName(pf + "axis_" + nm + "_tready")
+    strm.bits.setName(pf + "axis_" + nm + "_tdata")
+  }
+
+  addClock(Driver.implicitClock)
+  renameClock("clk", "aclk")
+
+  renameAsAXIStream(io.inA, "a", false)
+  renameAsAXIStream(io.inB, "b", false)
+  renameAsAXIStream(io.out, "result", true)
 }

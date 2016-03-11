@@ -14,7 +14,7 @@
 using namespace std;
 
 typedef unsigned int SpMVInd;
-typedef int64_t SpMVVal;
+typedef double SpMVVal;
 
 
 class RegSpMV: public AddMulSemiring<SpMVInd, SpMVVal>, public SWCSRSpMV<SpMVInd, SpMVVal> {
@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
       // make sure accel is reset prior to use -- important!
       platf->writeReg(0, 1);
       platf->writeReg(0, 0);
-      
+
       string matrixName;
       cout << "Enter matrix name or eye/dense/q: " << endl;
       cin >> matrixName;
