@@ -17,4 +17,5 @@ project/plugins/project/
 .worksheet
 
 emulator/
+verilator/
 matrices/

@@ -5,6 +5,37 @@ import fpgatidbits.dma._
 import fpgatidbits.streams._
 import fpgatidbits.ocm._
 
+class SimplifiedNBDMInpVecCache(p: SeyrekParams, chanIDBase: Int)  extends InpVecLoader(p) {
+  val inOrder = true
+  val gatherTagWidth = io.loadReq.bits.getWidth()
+  /* TODO add support for wider cachelines */
+  val theCache = Module(new GatherNBCache_InOrderMissHandling(
+    lines = 1024, nbMisses = 32, elemsPerLine = 1, pipelinedStorage = 0,
+    chanBaseID = chanIDBase, indWidth = p.indWidth, tagWidth = gatherTagWidth,
+    datWidth = p.valWidth, mrp = p.mrp, orderRsps = true
+  )).io
+  theCache.memRdReq <> io.mainMem.memRdReq
+  io.mainMem.memRdRsp <> theCache.memRdRsp
+
+  theCache.base := io.contextBase
+
+  theCache.in.valid := io.loadReq.valid
+  theCache.in.bits.ind := io.loadReq.bits.j
+  theCache.in.bits.tag := io.loadReq.bits.toBits()
+  io.loadReq.ready := theCache.in.ready
+
+  io.loadRsp.valid := theCache.out.valid
+  // recover original request
+  val origReq = io.loadReq.bits.fromBits(theCache.out.bits.tag)
+  io.loadRsp.bits.matrixVal := origReq.v
+  io.loadRsp.bits.rowInd := origReq.i
+  io.loadRsp.bits.rowLen := origReq.rl
+  io.loadRsp.bits.vectorVal := theCache.out.bits.dat
+  theCache.out.ready := io.loadRsp.ready
+
+  io.finished := Bool(true)
+}
+
 class NBDMInpVecCache(p: SeyrekParams, chanIDBase: Int) extends InpVecLoader(p) {
   val inOrder = false
 

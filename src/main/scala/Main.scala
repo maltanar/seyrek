@@ -6,13 +6,14 @@ import fpgatidbits.streams._
 import fpgatidbits.dma._
 import fpgatidbits.PlatformWrapper._
 import fpgatidbits.math._
+import fpgatidbits.TidbitsMakeUtils
 
 object ChannelConfigs {
   val csrTest = Map(
     "ptrs" -> ReadChanParams(maxReadTxns = 8, port = 2),
     "inds" -> ReadChanParams(maxReadTxns = 8, port = 3),
     "nzdata" -> ReadChanParams(maxReadTxns = 8, port = 0),
-    "inpvec" -> ReadChanParams(maxReadTxns = 8, port = 1)
+    "inpvec" -> ReadChanParams(maxReadTxns = 32, port = 1)
   )
 }
 
@@ -32,6 +33,7 @@ class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
 }
 
 object SeyrekMainObj {
+  val tidbitsRoot: String = "fpga-tidbits/src/main/"
   type AccelInstFxn = PlatformWrapperParams => SpMVAccelCSR
   type AccelMap = Map[String, AccelInstFxn]
   type PlatformInstFxn = AccelInstFxn => PlatformWrapper
@@ -99,7 +101,7 @@ object SeyrekMainObj {
     accInst(TesterWrapperParams).generatePerfCtrMapCode(folderName)
     // copy driver files for platform and Seyrek files
     val drvFiles: Array[String] = platformInst(accInst).platformDriverFiles
-    val regDrvRoot = "src/main/scala/fpga-tidbits/platform-wrapper/regdriver/"
+    val regDrvRoot = s"$tidbitsRoot/cpp/platform-wrapper-regdriver/"
     for(f <- drvFiles) {fileCopy(regDrvRoot+f, folderName+f)}
     copySeyrekFiles(platformName, folderName)
   }
@@ -116,7 +118,7 @@ object SeyrekMainObj {
     platformInst(accInst).generateRegDriver("emulator/")
     accInst(TesterWrapperParams).generatePerfCtrMapCode("emulator/")
     // copy emulator driver and SW support files
-    val regDrvRoot = "src/main/scala/fpga-tidbits/platform-wrapper/regdriver/"
+    val regDrvRoot = s"$tidbitsRoot/cpp/platform-wrapper-regdriver/"
     val files = Array("wrapperregdriver.h", "platform-tester.cpp",
       "platform.h", "testerdriver.hpp")
     for(f <- files) { fileCopy(regDrvRoot + f, "emulator/" + f) }
@@ -127,7 +129,7 @@ object SeyrekMainObj {
   def showHelp() = {
     println("Usage: run <op> <accel> <platform>")
     println("where:")
-    println("<op> = verilog software emulator")
+    println("<op> = (v)erilog (s)oftware (e)mulator ve(r)ilator")
     println("<accel> = " + accelConfigMap.keys.reduce({_ + " " +_}))
     println("<platform> = " + platformMap.keys.reduce({_ + " " +_}))
   }
@@ -147,6 +149,12 @@ object SeyrekMainObj {
       makeSWPackage(rst)
     } else if (op == "emulator" || op == "e") {
       makeEmulator(rst)
+    } else if (op == "verilator" || op == "r") {
+      val accInst = accelConfigMap(rst(0))
+      val platformInst = platformMap("Tester")
+      TidbitsMakeUtils.makeVerilator(accInst, tidbitsRoot, "verilator")
+      copySeyrekFiles("Tester", "verilator/")
+      accInst(TesterWrapperParams).generatePerfCtrMapCode("verilator/")
     } else {
       showHelp()
       return
