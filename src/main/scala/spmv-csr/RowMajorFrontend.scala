@@ -4,6 +4,7 @@ import Chisel._
 import fpgatidbits.dma._
 import fpgatidbits.ocm._
 import fpgatidbits.streams._
+import fpgatidbits.math._
 
 class RowMajorFrontendIO(p: SeyrekParams) extends Bundle with SeyrekCtrlStat {
   val csr = new CSRSpMV(p).asInput
@@ -40,6 +41,40 @@ class DummyRowMajorFrontend(p: SeyrekParams) extends Module {
     printf("Warning: using dummy frontend\n")
   }
 
+}
+
+
+class SimplifiedRowMajorFrontend(p: SeyrekParams) extends Module {
+  val io = new RowMajorFrontendIO(p)
+
+  // instantiate the semiring multiply op and the reducer
+  val mul = Module(new ContextfulSemiringOp(p, p.makeSemiringMul)).io
+
+  // (v, v, i) -> [queue] -> [mul] -> (n = v*v, i)
+  FPGAQueue(io.workUnits, 2) <> mul.in
+
+  val red = Module(new StreamingReducer(
+    valWidth = p.valWidth, indWidth = p.indWidth,
+    makeReducer = p.makeSemiringAdd
+  )).io
+
+  def fIn(a: ValIndInd): ReducerWorkUnit = {
+    val ret = new ReducerWorkUnit(p.valWidth, p.indWidth)
+    ret.groupID := a.i
+    ret.groupLen := a.j
+    ret.value := a.v
+    return ret
+  }
+
+  def fOut(a: ReducerOutput): ValIndPair = {
+    val ret = new ValIndPair(p.valWidth, p.indWidth)
+    ret.value := a.value
+    ret.ind := a.groupID
+    return ret
+  }
+
+  StreamFilter(FPGAQueue(mul.out, 2),red.in.bits, fIn) <> red.in
+  StreamFilter(red.out, io.results.bits, fOut) <> io.results
 }
 
 class RowMajorFrontend(p: SeyrekParams) extends Module {
