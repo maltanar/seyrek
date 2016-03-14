@@ -26,7 +26,7 @@ class CSRTestParams(p: PlatformWrapperParams) extends SeyrekParams {
   val valWidth = 64
   val mrp = p.toMemReqParams()
 
-  val makeSemiringAdd = { () => new DPAdder(6) }
+  val makeSemiringAdd = { () => new DPAdder(8) }
   val makeSemiringMul = { () => new DPMultiplier(8) }
 
   val issueWindow = 8
@@ -78,7 +78,8 @@ object SeyrekMainObj {
     for(f <- seyrekFiles) { fileCopy(seyrekDrvRoot + f, destDir + f) }
     val seyrekSpMap = Map(
       "ZedBoardLinux" -> "seyrek-zed-linux.cpp",
-      "Tester" -> "seyrek-tester.cpp"
+      "Tester" -> "seyrek-tester.cpp",
+      "WX690T" -> "seyrek-wx690t.cpp"
     )
     val seyrekSpFile = seyrekSpMap(platformName)
     fileCopy(seyrekDrvRoot+seyrekSpFile, destDir + seyrekSpFile)
