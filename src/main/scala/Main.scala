@@ -90,7 +90,7 @@ object SeyrekMainObj {
     val platformName = args(1)
     val accInst = accelConfigMap(accelName)
     val platformInst = platformMap(platformName)
-    val folderName = platformName + "-" + accelName + "/"
+    val folderName = "sw-" +  platformName + "-" + accelName + "/"
     // create target directory if missing
     import java.io.File
     val theDir = new File(folderName)
