@@ -5,12 +5,13 @@ import fpgatidbits.dma._
 import fpgatidbits.streams._
 import fpgatidbits.ocm._
 
-class SimplifiedNBDMInpVecCache(p: SeyrekParams, chanIDBase: Int)  extends InpVecLoader(p) {
+class SimplifiedNBDMInpVecCache(p: SeyrekParams, chanIDBase: Int, nbMisses: Int)
+extends InpVecLoader(p) {
   val inOrder = true
   val gatherTagWidth = io.loadReq.bits.getWidth()
   /* TODO add support for wider cachelines */
   val theCache = Module(new GatherNBCache_InOrderMissHandling(
-    lines = 1024, nbMisses = 32, elemsPerLine = 1, pipelinedStorage = 0,
+    lines = 32768, nbMisses = nbMisses, elemsPerLine = 1, pipelinedStorage = 2,
     chanBaseID = chanIDBase, indWidth = p.indWidth, tagWidth = gatherTagWidth,
     datWidth = p.valWidth, mrp = p.mrp, orderRsps = true
   )).io

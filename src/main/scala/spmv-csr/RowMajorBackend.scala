@@ -106,7 +106,9 @@ class RowMajorBackend(p: SeyrekParams) extends Module {
 
   // instantiate input vector loader -- TODO parametrize with function from p
   val inpVecLoader = Module(
-    new SimplifiedNBDMInpVecCache(p, memsys.getChanParams("inpvec").chanBaseID)
+    new SimplifiedNBDMInpVecCache(p,
+      chanIDBase = memsys.getChanParams("inpvec").chanBaseID,
+      nbMisses = memsys.getChanParams("inpvec").maxReadTxns)
   ).io
   memsys.connectChanReqRsp("inpvec", inpVecLoader.mainMem.memRdReq,
     inpVecLoader.mainMem.memRdRsp)
